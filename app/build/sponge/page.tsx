@@ -1,64 +1,95 @@
 "use client";
 
 import { OptionGrid } from "@/components/builder/OptionGrid";
-import { StepFooter } from "@/components/builder/StepNav";
-import { StepHeader } from "@/components/builder/StepHeader";
+import { GroupHeader, StepHeader } from "@/components/builder/StepHeader";
 import { ViolationCard } from "@/components/builder/ViolationCard";
-import { SPONGES } from "@/lib/catalog";
+import { offeredOrSelected } from "@/lib/catalogSnapshot";
+import { useCatalog } from "@/lib/catalogStore";
 import { useConfig, useSetConfig } from "@/lib/store";
 
 export default function SpongeStep() {
   const config = useConfig();
+  const catalog = useCatalog();
+  const sponges = offeredOrSelected(catalog, "sponge", config.sponge);
   const set = useSetConfig();
 
   return (
-    <>
-      <StepHeader title="Sponge" hint="The cake itself. This is what people taste first." />
+    <div className="flex flex-col gap-7">
+      <StepHeader
+        title="The sponge layers"
+        hint="Every layer is baked from this one. It is what people taste first."
+      />
+
+      {/*
+        Dietary sits ABOVE the fourteen sponges, not below them.
+
+        The controls column scrolls on its own and the page does not, so there is
+        no scrollbar to suggest anything follows the grid. Measured at 1440, 768
+        and 375, this fieldset landed between 1351px and 1884px down the column —
+        never on screen at any width — for the two controls on this step that
+        carry an allergen and change the price.
+
+        Eggless is our default rather than an upsell, and a default nobody can
+        find is not a default. Two rows before the grid is the whole cost.
+      */}
+      <fieldset>
+        <GroupHeader title="Dietary" hint="Both are separate bakes, so both change the price." />
+        <div className="grid gap-2.5 @md:grid-cols-2">
+          <DietOption
+            label="Eggless"
+            blurb="Our default. The crumb is slightly denser and holds moisture better."
+            checked={config.eggless}
+            onChange={(eggless) => set({ eggless })}
+          />
+          <DietOption
+            label="Sugar-free"
+            blurb="Sweetened with stevia and dates. Separate batch, so it costs more."
+            checked={config.sugarFree}
+            onChange={(sugarFree) => set({ sugarFree })}
+          />
+        </div>
+      </fieldset>
 
       <OptionGrid
-        options={SPONGES}
+        options={sponges}
+        label="Sponge"
         selected={(c) => c.sponge}
         patch={(sponge) => ({ sponge })}
       />
 
-      <fieldset className="mt-6 space-y-2">
-        <legend className="mb-2 text-meta text-steel">
-          Dietary
-        </legend>
-
-        <label className="flex cursor-pointer items-start gap-3 rounded-sm border border-rule bg-paper/60 px-3 py-2.5">
-          <input
-            type="checkbox"
-            checked={config.eggless}
-            onChange={(e) => set({ eggless: e.target.checked })}
-            className="mt-0.5 size-4 accent-ink"
-          />
-          <span>
-            <span className="block text-body font-medium">Eggless</span>
-            <span className="mt-0.5 block text-meta leading-snug text-steel">
-              Our default. The crumb is slightly denser and holds moisture better.
-            </span>
-          </span>
-        </label>
-
-        <label className="flex cursor-pointer items-start gap-3 rounded-sm border border-rule bg-paper/60 px-3 py-2.5">
-          <input
-            type="checkbox"
-            checked={config.sugarFree}
-            onChange={(e) => set({ sugarFree: e.target.checked })}
-            className="mt-0.5 size-4 accent-ink"
-          />
-          <span>
-            <span className="block text-body font-medium">Sugar-free</span>
-            <span className="mt-0.5 block text-meta leading-snug text-steel">
-              Sweetened with stevia and dates. Separate batch, so it costs more.
-            </span>
-          </span>
-        </label>
-      </fieldset>
-
       <ViolationCard />
-      <StepFooter />
-    </>
+    </div>
+  );
+}
+
+function DietOption({
+  label, blurb, checked, onChange,
+}: {
+  label: string;
+  blurb: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  return (
+    <label
+      className={[
+        "flex min-h-11 cursor-pointer items-start gap-3 border px-4 py-3.5",
+        "transition-[background-color,border-color,box-shadow] duration-[--dur-ui] ease-[--ease-out]",
+        checked
+          ? "border-ink bg-paper "
+          : "border-rule bg-paper hover:border-rule-strong",
+      ].join(" ")}
+    >
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        className="mt-1 size-[18px] shrink-0 accent-ink"
+      />
+      <span className="min-w-0">
+        <span className="block text-item font-medium">{label}</span>
+        <span className="mt-1 block text-meta leading-snug text-steel">{blurb}</span>
+      </span>
+    </label>
   );
 }

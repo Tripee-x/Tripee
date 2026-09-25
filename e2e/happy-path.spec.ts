@@ -1,4 +1,17 @@
 import { expect, test } from "@playwright/test";
+import { BUILDER_ENABLED, BUILDER_HELD } from "./flags";
+
+/*
+ * Every test in this file drives the nine-step 3D builder, which Phase 1 of
+ * the storefront redesign holds back — see lib/flags.ts and e2e/flags.ts. The
+ * builder itself is untouched and complete, so these are skipped rather than
+ * rewritten or removed: flipping NEXT_PUBLIC_BUILDER_ENABLED back on brings
+ * the feature and its coverage back together.
+ *
+ * The journey a customer actually takes today — home, shop, cake, cart,
+ * checkout, order reference — is e2e/shop.spec.ts, which runs unconditionally.
+ */
+test.skip(!BUILDER_ENABLED, BUILDER_HELD);
 
 /**
  * One happy path, end to end: a stranger arrives, builds a cake they imagined,
@@ -7,9 +20,13 @@ import { expect, test } from "@playwright/test";
  */
 test("a stranger can build a cake, be corrected, and get an order reference", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { level: 1 })).toContainText("Build your cake");
+  // The redesigned hero headline. Copy, not contract — the contract on this page
+  // is the "Start building" call to action on the line below.
+  await expect(page.getByRole("heading", { level: 1 })).toContainText("Custom cake");
 
-  await page.getByRole("link", { name: "Start building" }).click();
+  // The redesigned landing repeats this call to action three times — nav, hero
+  // and the closing band. Any of them is the same destination; take the first.
+  await page.getByRole("link", { name: "Start building" }).first().click();
   await expect(page).toHaveURL(/\/build\/shape$/);
 
   // The canvas mounts and the docket is already showing a price.
@@ -23,14 +40,14 @@ test("a stranger can build a cake, be corrected, and get an order reference", as
 
   // Size and tiers — two tiers on a 1kg cake is blocked, and says so.
   await page.getByRole("radio", { name: /^2 kg/ }).click();
-  await page.getByRole("button", { name: /^2 tiers/ }).click();
+  await page.getByRole("radio", { name: /^2 tiers/ }).click();
 
   // Sponge
-  await page.getByRole("link", { name: "Sponge →" }).click();
+  await page.getByRole("link", { name: "Sponge layers →" }).click();
   await page.getByRole("radio", { name: /^Belgian Chocolate/ }).click();
 
   // Filling
-  await page.getByRole("link", { name: "Filling →" }).click();
+  await page.getByRole("link", { name: "Between layers →" }).click();
   await page.getByRole("radio", { name: /^Salted Caramel/ }).click();
 
   // Frosting — whipped cream cannot hold two tiers. Take the offered fix.
@@ -50,7 +67,9 @@ test("a stranger can build a cake, be corrected, and get an order reference", as
   // Toppings
   await page.getByRole("link", { name: "Toppings →" }).click();
   await page.getByRole("button", { name: /^Strawberry/ }).click();
-  await expect(page.getByRole("listitem")).toHaveCount(1);
+  // The chosen topping's settings are on the render now, not in a list under the
+  // picker — see builder/ToppingBar. The slider existing is the proof it landed.
+  await expect(page.getByRole("slider", { name: "Strawberry density" })).toBeVisible();
 
   // Message
   await page.getByRole("link", { name: "Message →" }).click();
@@ -59,7 +78,7 @@ test("a stranger can build a cake, be corrected, and get an order reference", as
 
   // The docket picked all of it up.
   await expect(docket).toContainText("SWISS MERINGUE");
-  await expect(docket).toContainText("HAPPY BIRTHDAY AMMA");
+  await expect(docket).toContainText("Happy Birthday Amma");
 
   // Review, and place the order.
   await page.getByRole("link", { name: "Review →" }).click();
@@ -70,7 +89,9 @@ test("a stranger can build a cake, be corrected, and get an order reference", as
   await page.getByLabel("Phone").fill("9876543210");
 
   await page.getByRole("button", { name: /^Place order/ }).click();
-  await expect(page.getByRole("heading", { name: /^Order MC-\d{4}$/ })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: /^Order MC-[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{6}$/ }),
+  ).toBeVisible();
 });
 
 test("undo puts back a choice the customer changed their mind about", async ({ page }) => {
@@ -120,16 +141,29 @@ test("cutting a slice exposes the inside and leaves the price alone", async ({ p
   await page.getByRole("radio", { name: /^Salted Caramel/ }).click();
   await expect(docket).toContainText("SALTED CARAMEL");
 
+  // This step renders the view toggle twice on purpose — once by the canvas and
+  // once in the content, under the same name, so it stays reachable on a phone
+  // (see the comment in app/build/filling/page.tsx). Scope to the in-content one
+  // so the query names a single control.
+  const toggle = (name: string) =>
+    page.locator("#main").getByRole("button", { name });
+
+  // The section view is the default (lib/view.ts), so the whole cake is the
+  // thing you ask for, not the thing you land on. Start from it, so the round
+  // trip below is whole -> cut -> whole.
+  await toggle("Whole cake").click();
+  await expect(toggle("Cut a slice")).toBeVisible();
+
   const before = await docket.textContent();
 
   // A cut is a way of looking at the cake, not a thing you order: the docket,
   // the price and the config must all be untouched by it.
-  await page.getByRole("button", { name: "Cut a slice" }).click();
-  await expect(page.getByRole("button", { name: "Whole cake" })).toBeVisible();
+  await toggle("Cut a slice").click();
+  await expect(toggle("Whole cake")).toBeVisible();
   expect(await docket.textContent()).toBe(before);
 
-  await page.getByRole("button", { name: "Whole cake" }).click();
-  await expect(page.getByRole("button", { name: "Cut a slice" })).toBeVisible();
+  await toggle("Whole cake").click();
+  await expect(toggle("Cut a slice")).toBeVisible();
 });
 
 test("the message plaque lifts while typing and settles when done", async ({ page }) => {
@@ -147,4 +181,66 @@ test("the message plaque lifts while typing and settles when done", async ({ pag
   await expect(page.getByText("Held clear of the cake while you type")).toBeVisible();
   await page.getByPlaceholder("Happy Birthday Amma").press("Enter");
   await expect(page.getByText("Sitting on the cake")).toBeVisible();
+});
+
+/**
+ * A preset has to land where the customer still has something to say.
+ *
+ * It used to open on Review, on the reasoning that a preset is a finished cake
+ * and nobody should be walked back through nine settled decisions. True of six of
+ * them — shape, size, sponge, filling, frosting, finish are what the preset *is*.
+ * Not true of the last two: most presets carry no message, so opening on the
+ * docket shipped a cake with nothing written on it and never asked whose birthday
+ * it was.
+ */
+test("a preset opens where the customer still has a choice to make", async ({ page }) => {
+  await page.goto("/presets");
+
+  /*
+   * By name, not by position.
+   *
+   * This clicked `.first()` and then asserted the docket said BELGIAN CHOCOLATE,
+   * which was two facts wearing one coat: that a preset carries its own choices
+   * into the builder, and that the first card on the catalogue happened to be a
+   * chocolate cake. Only the first is what the test is for, and the second broke
+   * the moment twelve flavours went in ahead of the eight designs — a card order
+   * decided in lib/presets should not be able to fail an assertion about the
+   * builder.
+   */
+  const card = page.locator("li", { has: page.getByRole("heading", { name: "Lotus Biscoff" }) });
+
+  /*
+   * The catalogue pages at eight to a card now, so being *in* it no longer means
+   * being on the page this landed on. Walked forward until the card is there,
+   * because the note above is about a card's position not being allowed to fail
+   * an assertion about the builder — and a page break is a position. Bounded, so
+   * a preset that has actually been removed fails here rather than spinning.
+   */
+  for (let n = 2; !(await card.count()); n++) {
+    expect(n, "Lotus Biscoff is not in the catalogue").toBeLessThanOrEqual(12);
+    await page.goto(`/presets?page=${n}`);
+  }
+
+  await card.getByRole("button", { name: "Order now" }).click();
+
+  // Toppings, not Review: the first step the preset could not decide for anyone.
+  await expect(page).toHaveURL(/\/build\/toppings$/);
+  await expect(page.locator("canvas")).toBeVisible();
+
+  // The preset's own choices came with it rather than being reset to a plain cake.
+  // Its filling, which no default cake has and no other preset uses.
+  const docket = page.getByRole("complementary", { name: "Order docket" });
+  await expect(docket).toContainText("BISCOFF SPREAD");
+
+  // Its topping is already there and adjustable, which is the point of landing here.
+  await expect(page.getByRole("slider", { name: /density$/ })).toBeVisible();
+
+  // And the two questions that are actually the customer's are ahead of them,
+  // each with its own button, rather than behind them in a nav they have no
+  // reason to look at.
+  await page.getByRole("link", { name: "Message →" }).click();
+  await page.getByPlaceholder("Happy Birthday Amma").fill("Happy Birthday Ammu");
+
+  await page.getByRole("link", { name: "Review →" }).click();
+  await expect(docket).toContainText("Happy Birthday Ammu");
 });

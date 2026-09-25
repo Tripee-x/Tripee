@@ -1,14 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { allergenLine, deriveAllergens } from "@/lib/allergens";
 import { resolveSlot, servicePincode, zoneForPincode } from "@/lib/delivery";
-import { buildDocket, previewRef, renderSpecSheet } from "@/lib/docket";
+import { DEFAULT_SNAPSHOT } from "@/lib/catalogDefaults";
+import { buildDocket, deriveLayers, previewRef, renderSpecSheet } from "@/lib/docket";
 import { formatDelta, formatINR } from "@/lib/format";
 import { canSubmit } from "@/lib/rules";
-import { decodeConfig, encodeConfig } from "@/lib/share";
+import { decodeConfig, encodeConfig, makeOrderRef } from "@/lib/share";
 import { mulberry32, scatterDisc, seedFrom } from "@/lib/seed";
-import { CakeConfig, DEFAULT_CAKE, migrateConfig, type CakeConfig as Cfg } from "@/lib/schema";
+import { CakeConfig, DEFAULT_CAKE, Shape, migrateConfig, type CakeConfig as Cfg } from "@/lib/schema";
 import { deriveHandling, deriveServings } from "@/lib/servings";
 import { PRESETS } from "@/lib/presets";
+import { SHAPES } from "@/lib/catalog";
 
 const cake = (patch: Partial<Cfg> = {}): Cfg => ({ ...DEFAULT_CAKE, ...patch });
 
@@ -62,22 +64,22 @@ describe("servings and handling", () => {
 
 describe("delivery", () => {
   it("maps Hyderabad pincodes to zones", () => {
-    expect(zoneForPincode("500081")!.id).toBe("core");
-    expect(zoneForPincode("500500")!.id).toBe("outer");
-    expect(zoneForPincode("501401")!.id).toBe("extended");
-    expect(zoneForPincode("110001")).toBeNull();
-    expect(servicePincode("500081")).toBe(true);
+    expect(zoneForPincode("500081", DEFAULT_SNAPSHOT)!.id).toBe("core");
+    expect(zoneForPincode("500500", DEFAULT_SNAPSHOT)!.id).toBe("outer");
+    expect(zoneForPincode("501401", DEFAULT_SNAPSHOT)!.id).toBe("extended");
+    expect(zoneForPincode("110001", DEFAULT_SNAPSHOT)).toBeNull();
+    expect(servicePincode("500081", DEFAULT_SNAPSHOT)).toBe(true);
   });
 
   it("adds rider time in outer zones and withdraws express", () => {
-    expect(resolveSlot("standard", "500081").effectiveLeadHours).toBe(48);
-    expect(resolveSlot("standard", "500500").effectiveLeadHours).toBe(50);
-    expect(resolveSlot("express-4hr", "500500").available).toBe(false);
-    expect(resolveSlot("express-4hr", "500500").unavailableReason).toBeTruthy();
+    expect(resolveSlot("standard", "500081", DEFAULT_SNAPSHOT).effectiveLeadHours).toBe(48);
+    expect(resolveSlot("standard", "500500", DEFAULT_SNAPSHOT).effectiveLeadHours).toBe(50);
+    expect(resolveSlot("express-4hr", "500500", DEFAULT_SNAPSHOT).available).toBe(false);
+    expect(resolveSlot("express-4hr", "500500", DEFAULT_SNAPSHOT).unavailableReason).toBeTruthy();
   });
 
   it("never charges rider time against a pickup", () => {
-    expect(resolveSlot("pickup", "501401").effectiveLeadHours).toBe(24);
+    expect(resolveSlot("pickup", "501401", DEFAULT_SNAPSHOT).effectiveLeadHours).toBe(24);
   });
 });
 
@@ -125,6 +127,21 @@ describe("share links", () => {
   });
 });
 
+describe("order references", () => {
+  it("uses an alphabet a customer can read back down a phone line", () => {
+    // No O/0 and no I/l/1 — a reference gets read aloud and written down.
+    expect(makeOrderRef()).toMatch(/^MC-[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{6}$/);
+  });
+
+  it("draws from a space large enough that the retry loop stays a backstop", () => {
+    // Order.ref is UNIQUE and /api/orders retries only five times. The old
+    // scheme had 9,000 possible values, so this many draws collided thousands
+    // of times and the constraint became a hard ceiling on the whole product.
+    const refs = new Set(Array.from({ length: 5000 }, makeOrderRef));
+    expect(refs.size).toBeGreaterThan(4990);
+  });
+});
+
 describe("schema migration", () => {
   it("accepts a valid v1 config", () => {
     expect(migrateConfig(JSON.parse(JSON.stringify(DEFAULT_CAKE)))).toEqual(DEFAULT_CAKE);
@@ -132,6 +149,36 @@ describe("schema migration", () => {
 
   it("rejects a config with an unknown enum value", () => {
     expect(migrateConfig({ ...DEFAULT_CAKE, sponge: "durian" })).toBeNull();
+  });
+
+  /*
+   * Bundt was withdrawn as a shape. A saved design that names it is a cake
+   * somebody configured and may have shared, so it has to keep loading — the
+   * whole point of the coercion is that a withdrawn value does not take the
+   * other fifteen fields down with it.
+   */
+  it("loads a withdrawn shape as the shape it was closest to", () => {
+    const saved = { ...DEFAULT_CAKE, shape: "bundt", sponge: "marble" as const };
+    const loaded = migrateConfig(saved);
+    expect(loaded).not.toBeNull();
+    expect(loaded!.shape).toBe("round");
+    // Everything else on that ticket survives, which is the part that matters.
+    expect(loaded!.sponge).toBe("marble");
+    expect(loaded).toEqual({ ...DEFAULT_CAKE, shape: "round", sponge: "marble" });
+  });
+
+  it("leaves a coerced shape alone when it was never a bundt", () => {
+    for (const shape of Shape.options) {
+      expect(migrateConfig({ ...DEFAULT_CAKE, shape })!.shape).toBe(shape);
+    }
+  });
+
+  it("no longer offers Bundt anywhere a customer can pick a shape", () => {
+    expect(Shape.options).not.toContain("bundt");
+    expect(SHAPES.map(s => s.value)).not.toContain("bundt");
+    // The picker and the schema must not drift: a card with no enum value behind
+    // it is a shape a customer can choose and the server will reject.
+    expect(SHAPES.map(s => s.value).sort()).toEqual([...Shape.options].sort());
   });
 
   it("rejects a config missing the version", () => {
@@ -152,13 +199,13 @@ describe("docket", () => {
   });
 
   it("lists a row for every choice that has been made", () => {
-    const d = buildDocket(cake({ hasDrip: true, message: "Hi", toppings: [{ kind: "oreo", placement: "base-border", density: 2 }] }));
+    const d = buildDocket(cake({ hasDrip: true, message: "Hi", toppings: [{ kind: "oreo", placement: "base-border", density: 2 }] }), DEFAULT_SNAPSHOT);
     const keys = d.rows.map(r => r.key);
     expect(keys).toEqual(expect.arrayContaining(["shape", "size", "sponge", "frosting", "drip", "message", "topping-oreo", "delivery"]));
   });
 
   it("renders a spec sheet containing the total, servings and handling", () => {
-    const sheet = renderSpecSheet(cake({ size: "1.5kg", sponge: "belgian-chocolate" }));
+    const sheet = renderSpecSheet(cake({ size: "1.5kg", sponge: "belgian-chocolate" }), DEFAULT_SNAPSHOT);
     expect(sheet).toContain("TOTAL");
     expect(sheet).toContain("Serves");
     expect(sheet).toContain("Best before");
@@ -168,7 +215,7 @@ describe("docket", () => {
   it("prints no FSSAI line unless a real licence number is configured", () => {
     // Inventing a food-safety registration number would be a lie about a
     // registration that does not exist, so the line is opt-in.
-    expect(renderSpecSheet(DEFAULT_CAKE)).not.toContain("FSSAI");
+    expect(renderSpecSheet(DEFAULT_CAKE, DEFAULT_SNAPSHOT)).not.toContain("FSSAI");
   });
 });
 
@@ -182,5 +229,26 @@ describe("presets", () => {
 
   it("has unique slugs", () => {
     expect(new Set(PRESETS.map(p => p.slug)).size).toBe(PRESETS.length);
+  });
+});
+
+describe("layers", () => {
+  it("puts filling in the gaps between the sponge slabs", () => {
+    const l = deriveLayers(cake({ layers: 3, sponge: "belgian-chocolate", filling: "chocolate-mousse" }));
+    expect(l.map(x => `${x.flavor} ${x.type}`)).toEqual([
+      "Belgian Chocolate sponge",
+      "Chocolate Mousse filling",
+      "Belgian Chocolate sponge",
+      "Chocolate Mousse filling",
+      "Belgian Chocolate sponge",
+    ]);
+  });
+
+  it("lists sponge only when nothing is filled between the layers", () => {
+    const l = deriveLayers(cake({ layers: 2, filling: "none" }));
+    expect(l).toEqual([
+      { type: "sponge", flavor: "Vanilla" },
+      { type: "sponge", flavor: "Vanilla" },
+    ]);
   });
 });

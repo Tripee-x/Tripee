@@ -1,4 +1,5 @@
 import { deriveAllergens } from "./allergens";
+import { entryFor, type CatalogSnapshot } from "./catalogSnapshot";
 import { resolveSlot } from "./delivery";
 import { docketAmount, formatIST, titleCase } from "./format";
 import { priceCake, type PriceBreakdown, type PriceLine } from "./pricing";
@@ -20,6 +21,64 @@ export const FSSAI_LICENCE = process.env.NEXT_PUBLIC_FSSAI_LICENCE ?? "";
  */
 export function previewRef(c: CakeConfig): string {
   return "MC-" + (1000 + (seedFrom(c) % 9000)).toString();
+}
+
+/**
+ * What to call this cake where a list has one line for it.
+ *
+ * A custom cake has no product name — the customer assembled it — so the two
+ * facts they will recognise their own order by are the flavour and the size,
+ * read out of the catalogue rather than title-cased off the enum: the bakery
+ * writes "Belgian Chocolate" and "1.5 kg", and a screen saying
+ * "Belgian-chocolate" is the code showing through.
+ *
+ * `entryFor` and not `offered`, deliberately. An order naming a withdrawn
+ * flavour still has to say what it was — see the note on `entryFor` itself —
+ * and the fallback exists for the deployment with no catalogue at all.
+ */
+export function cakeTitle(c: CakeConfig, catalog: CatalogSnapshot): string {
+  const sponge = entryFor(catalog, "sponge", c.sponge)?.name ?? titleCase(c.sponge);
+  const size = entryFor(catalog, "size", c.size)?.name ?? c.size;
+  return `${sponge}, ${size}`;
+}
+
+/** The line under the title: how it was finished, and how tall it stands. */
+export function cakeSubtitle(c: CakeConfig, catalog: CatalogSnapshot): string {
+  const name = (category: "frosting" | "finish" | "shape", value: string) =>
+    entryFor(catalog, category, value)?.name ?? titleCase(value);
+
+  return [
+    name("shape", c.shape),
+    name("frosting", c.frosting),
+    `${name("finish", c.finish)} finish`,
+    c.tiers > 1 ? `${c.tiers} tiers` : null,
+    c.eggless ? "eggless" : null,
+    c.sugarFree ? "sugar-free" : null,
+  ].filter(Boolean).join(" · ");
+}
+
+/** One slab of the cut cake, bottom to top. Mirrors `slabStack` in the 3D. */
+export interface CakeLayer {
+  type: "sponge" | "filling";
+  flavor: string;
+}
+
+/**
+ * The cake read the way it is built, not the way it is configured: sponge,
+ * filling, sponge. `layers` counts the sponge slabs, so the filling sits in the
+ * n-1 gaps between them — the same stack `slabStack` extrudes for the section
+ * view. A cake with no filling has nothing but frosting scrape in the gaps, so
+ * the gaps go unlisted rather than being named after something you did not order.
+ */
+export function deriveLayers(c: CakeConfig): CakeLayer[] {
+  const sponge = titleCase(c.sponge);
+  const filling = c.filling === "none" ? null : titleCase(c.filling);
+  const out: CakeLayer[] = [];
+  for (let i = 0; i < c.layers; i++) {
+    if (i > 0 && filling) out.push({ type: "filling", flavor: filling });
+    out.push({ type: "sponge", flavor: sponge });
+  }
+  return out;
 }
 
 export interface DocketRow {
@@ -45,12 +104,13 @@ export interface DocketModel {
 /** The live docket beside the canvas — short rows, price deltas attached. */
 export function buildDocket(
   c: CakeConfig,
+  catalog: CatalogSnapshot,
   opts: { ref?: string; createdAt?: Date } = {},
 ): DocketModel {
-  const price = priceCake(c);
+  const price = priceCake(c, catalog);
   const allergens = deriveAllergens(c);
   const handling = deriveHandling(c);
-  const slot = resolveSlot(c.delivery, c.pincode);
+  const slot = resolveSlot(c.delivery, c.pincode, catalog);
   const servings = deriveServings(c);
 
   /**
@@ -152,7 +212,7 @@ export function buildDocket(
     rows.push({
       key: "message",
       label: "MSG",
-      value: `"${c.message.trim().toUpperCase()}"`,
+      value: `"${c.message.trim()}"`,
       delta: byLabel("Message piping", "labour"),
     });
   }
@@ -205,13 +265,24 @@ export function buildDocket(
 /**
  * The full spec sheet — the thing a kitchen actually works from. Rendered as
  * monospace text so it is identical in the terminal, the browser and the PDF.
+ *
+ * `omitPrice` exists for one caller: the printed docket at
+ * /admin/orders/[ref]/print. Every price in here is computed from the catalogue
+ * passed in, which is the right answer for a sheet generated beside the builder
+ * and the wrong one for an order placed last month — that order's price was
+ * frozen when it was agreed, and a document put in front of a customer has to
+ * show the figure they agreed to rather than what the same cake would cost
+ * today. So the print page suppresses this section and prints the frozen
+ * OrderItem lines instead. Everything above the price describes the cake rather
+ * than charging for it, and is safe to regenerate.
  */
 export function renderSpecSheet(
   c: CakeConfig,
-  opts: { ref?: string; createdAt?: Date; width?: number } = {},
+  catalog: CatalogSnapshot,
+  opts: { ref?: string; createdAt?: Date; width?: number; omitPrice?: boolean } = {},
 ): string {
   const w = opts.width ?? 62;
-  const d = buildDocket(c, opts);
+  const d = buildDocket(c, catalog, opts);
   const out: string[] = [];
 
   const rule = (ch = "─") => ch.repeat(w);
@@ -221,7 +292,7 @@ export function renderSpecSheet(
     return `  ${k.padEnd(w - 4 - amt.length)}${amt}`;
   };
 
-  out.push("MAKEMYCAKE — ORDER DOCKET");
+  out.push("MakeYourCakes — ORDER DOCKET");
   out.push(rule("═"));
   out.push(kv("Order ref", d.ref));
   out.push(kv("Created", d.createdAt));
@@ -271,13 +342,15 @@ export function renderSpecSheet(
   out.push(kv("Pincode", d.delivery.pincode ?? "Not set"));
   out.push("");
 
-  out.push("PRICE");
-  for (const l of d.price.lines) out.push(money(l.label, l.amount));
-  out.push("  " + rule("─").slice(2));
-  out.push(money("Subtotal", d.price.subtotal));
-  out.push(money(`GST @ ${Math.round(d.price.gstRate * 100)}%`, d.price.gst));
-  out.push("  " + rule("─").slice(2));
-  out.push(money("TOTAL", d.price.total));
+  if (!opts.omitPrice) {
+    out.push("PRICE");
+    for (const l of d.price.lines) out.push(money(l.label, l.amount));
+    out.push("  " + rule("─").slice(2));
+    out.push(money("Subtotal", d.price.subtotal));
+    out.push(money(`GST @ ${Math.round(d.price.gstRate * 100)}%`, d.price.gst));
+    out.push("  " + rule("─").slice(2));
+    out.push(money("TOTAL", d.price.total));
+  }
   if (d.fssai) {
     out.push("");
     out.push(`FSSAI Lic. No. ${d.fssai}`);

@@ -5,10 +5,12 @@ import { LoadConfig } from "@/components/builder/LoadConfig";
 import { PriceBreakdown } from "@/components/docket/PriceBreakdown";
 import { decodeConfig } from "@/lib/share";
 import { titleCase } from "@/lib/format";
+import { getCatalogSnapshot } from "@/lib/catalogData";
 import { priceCake } from "@/lib/pricing";
+import { btn, eyebrow } from "@/lib/ui";
 
 export const metadata: Metadata = {
-  title: "A shared cake — Makemycake",
+  title: "A shared cake — MakeYourCakes",
   robots: { index: false, follow: false },
 };
 
@@ -23,16 +25,13 @@ export default async function InlineDesign({
 
   if (!config) {
     return (
-      <main className="mx-auto max-w-lg px-4 py-16 text-center">
-        <h1 className="text-2xl">That link didn&rsquo;t survive the journey</h1>
-        <p className="mt-2 text-body text-steel">
+      <main id="main" className="mx-auto flex max-w-xl flex-col items-center gap-5 px-4 py-24 text-center">
+        <h1 className="text-heading">That link didn&rsquo;t survive the journey</h1>
+        <p className="text-body leading-relaxed text-steel">
           Cake designs travel in the address bar, and something trimmed this one.
           Ask whoever sent it to share it again, or build your own.
         </p>
-        <Link
-          href="/build/shape"
-          className="mt-5 inline-block rounded-sm bg-ink px-4 py-2 text-meta text-paper"
-        >
+        <Link href="/build/shape" className={btn("primary", "md")}>
           Build one
         </Link>
       </main>
@@ -40,30 +39,33 @@ export default async function InlineDesign({
   }
 
   return (
-    <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
-      <Link href="/" className="font-mono text-body font-bold tracking-wider">
-        MAKEMYCAKE
+    <main id="main" className="mx-auto max-w-6xl px-4 py-10 sm:px-8">
+      <Link href="/" className="font-mono text-meta font-medium tracking-[0.2em]">
+        MakeYourCakes
       </Link>
 
-      <div className="mt-6 grid gap-6 lg:grid-cols-[1.3fr_1fr]">
-        <div className="aspect-square overflow-hidden rounded-sm bg-paper paper-edge">
-          <CakePreview config={config} autoRotate />
+      <div className="mt-8 grid gap-8 lg:grid-cols-[1.3fr_1fr]">
+        <div className="cake-stage overflow-hidden p-6">
+          <div className="aspect-square">
+            <CakePreview config={config} autoRotate />
+          </div>
         </div>
 
-        <div>
-          <h1 className="text-3xl leading-tight">
+        <div className="flex flex-col gap-5">
+          <span className={eyebrow}>Carried in the link</span>
+          <h1 className="text-heading">
             {titleCase(config.sponge)}, {config.size}
           </h1>
-          <p className="mt-1 text-body text-steel">
+          <p className="text-body leading-relaxed text-steel">
             {titleCase(config.frosting)} · {titleCase(config.finish)} finish
           </p>
 
-          <div className="mt-5 rounded-sm bg-paper p-4 paper-edge">
-            <PriceBreakdown price={priceCake(config)} />
+          <div className="border border-rule bg-paper p-5 ">
+            <PriceBreakdown price={priceCake(config, await getCatalogSnapshot())} />
           </div>
 
-          <div className="mt-5">
-            <LoadConfig config={config} label="Open in the builder" />
+          <div>
+            <LoadConfig config={config} label="Open in the builder" variant="primary" />
           </div>
         </div>
       </div>

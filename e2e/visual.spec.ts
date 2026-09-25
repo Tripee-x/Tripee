@@ -1,10 +1,11 @@
 import { expect, test } from "@playwright/test";
+import { BUILDER_ENABLED, BUILDER_HELD } from "./flags";
 
 /**
  * Pixel baselines for the render.
  *
  * Every render bug in this project so far was found by a person looking at a
- * PNG — the inside-out bundt, the mirrored plaque, the drip ring hovering off
+ * PNG — an inside-out lathe, the mirrored plaque, the drip ring hovering off
  * a heart. None of them would have survived a diff. This is that diff.
  *
  * It only works because the cake is deterministic: scatter, drips and layer
@@ -19,8 +20,13 @@ async function settle(page: import("@playwright/test").Page) {
 }
 
 test.describe("render baselines", () => {
-  test("the twelve extremes, whole", async ({ page }) => {
+  test("the extremes, whole", async ({ page }) => {
     await page.goto("/lab");
+    // The section view is the default (lib/view.ts), so the whole cake has to be
+    // asked for. Without this the baseline silently captured a cut cake and was
+    // byte-identical to lab-cut.png — two tests, one picture, no coverage.
+    await page.waitForSelector("canvas");
+    await page.getByLabel("Cut a slice").uncheck();
     await settle(page);
     await expect(page).toHaveScreenshot("lab-whole.png", {
       fullPage: true,
@@ -28,7 +34,7 @@ test.describe("render baselines", () => {
     });
   });
 
-  test("the twelve extremes, cut", async ({ page }) => {
+  test("the extremes, cut", async ({ page }) => {
     await page.goto("/lab");
     await page.waitForSelector("canvas");
     await page.getByLabel("Cut a slice").check();
@@ -40,12 +46,14 @@ test.describe("render baselines", () => {
   });
 
   test("the builder, with the docket", async ({ page }) => {
+    test.skip(!BUILDER_ENABLED, BUILDER_HELD);
     await page.goto("/build/frosting");
     await settle(page);
     await expect(page).toHaveScreenshot("builder.png", { maxDiffPixelRatio: 0.02 });
   });
 
   test("the plaque hovers while the message is being typed", async ({ page }) => {
+    test.skip(!BUILDER_ENABLED, BUILDER_HELD);
     await page.goto("/build/message");
     await page.waitForSelector("canvas");
     await page.getByPlaceholder("Happy Birthday Amma").fill("Happy Birthday Amma");
@@ -54,6 +62,7 @@ test.describe("render baselines", () => {
   });
 
   test("the plaque settles onto the cake when it is done", async ({ page }) => {
+    test.skip(!BUILDER_ENABLED, BUILDER_HELD);
     await page.goto("/build/message");
     await page.waitForSelector("canvas");
     await page.getByPlaceholder("Happy Birthday Amma").fill("Happy Birthday Amma");
@@ -62,9 +71,38 @@ test.describe("render baselines", () => {
     await expect(page).toHaveScreenshot("message-placed.png", { maxDiffPixelRatio: 0.02 });
   });
 
-  test("the landing hero", async ({ page }) => {
+  /*
+   * The shop front. It no longer has a canvas on it — the hero is a photograph
+   * of a cake rather than a live render — so `settle()`, which waits for one,
+   * would hang here. What it waits for instead is the hero image having decoded,
+   * which is the only thing on this page that arrives late.
+   */
+  test("the shop front", async ({ page }) => {
     await page.goto("/");
+    await page.waitForLoadState("networkidle");
+    await page.waitForTimeout(1000);
+    await expect(page).toHaveScreenshot("shopfront.png", {
+      fullPage: true,
+      maxDiffPixelRatio: 0.02,
+    });
+  });
+});
+
+/**
+ * Below lg the stage is short and wide — 32dvh of a phone, against a canvas
+ * that is the full width. Nothing covered that until the framing was found to
+ * be solving the fit for a flat cake seen head-on: it forgot the rig looks
+ * *down*, so height alone under-read the room the cake needs and the cake grew
+ * out of the top and bottom of the frame. The desktop baselines could not catch
+ * it because a tall stage is bound by width, where the fit was already right.
+ */
+test.describe("render baselines below lg", () => {
+  test.use({ viewport: { width: 430, height: 900 } });
+
+  test("the builder on a phone", async ({ page }) => {
+    test.skip(!BUILDER_ENABLED, BUILDER_HELD);
+    await page.goto("/build/frosting");
     await settle(page);
-    await expect(page).toHaveScreenshot("landing.png", { maxDiffPixelRatio: 0.02 });
+    await expect(page).toHaveScreenshot("builder-phone.png", { maxDiffPixelRatio: 0.02 });
   });
 });

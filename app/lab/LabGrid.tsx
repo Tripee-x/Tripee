@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { LazyCakeScene } from "@/components/three/LazyCakeScene";
+import { useCatalog } from "@/lib/catalogStore";
 import { priceCake } from "@/lib/pricing";
 import { formatINR } from "@/lib/format";
 import { validateCake } from "@/lib/rules";
@@ -13,14 +14,15 @@ export function LabGrid() {
   const [big, setBig] = useState<number | null>(null);
   const sliced = useView(s => s.sliced);
   const toggleSlice = useView(s => s.toggleSlice);
+  const catalog = useCatalog();
 
   return (
-    <main className="min-h-dvh px-4 py-8 sm:px-8">
+    <main id="main" className="min-h-dvh px-4 py-8 sm:px-8">
       <header className="mb-8 flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-3xl">Render lab</h1>
           <p className="mt-1 max-w-2xl text-sm text-steel">
-            Twelve extremes at once. Squint at it — does the silhouette read as a cake?
+            {LAB_CONFIGS.length} extremes at once. Squint at it — does the silhouette read as a cake?
             Would you eat it? If anyone says &ldquo;plastic&rdquo;, &ldquo;wax&rdquo; or
             &ldquo;3D model&rdquo;, it is not done.
           </p>
@@ -50,13 +52,13 @@ export function LabGrid() {
 
       <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
         {LAB_CONFIGS.map((entry, i) => {
-          const price = priceCake(entry.config);
+          const price = priceCake(entry.config, catalog);
           const notes = validateCake(entry.config);
 
           return (
             <figure
               key={entry.label}
-              className="overflow-hidden rounded-sm bg-paper paper-edge"
+              className="overflow-hidden bg-paper paper-edge"
             >
               <button
                 type="button"
@@ -74,7 +76,7 @@ export function LabGrid() {
 
               <figcaption className="border-t border-rule px-3 py-2.5">
                 <div className="flex items-baseline justify-between gap-3">
-                  <span className="text-meta font-semibold ">
+                  <span className="text-meta font-medium ">
                     {entry.label}
                   </span>
                   <span className="font-mono text-meta tabular-nums text-steel">
@@ -99,7 +101,7 @@ export function LabGrid() {
           onClick={() => setBig(null)}
         >
           <div
-            className="h-[min(88vh,88vw)] w-[min(88vh,88vw)] overflow-hidden rounded-sm bg-paper"
+            className="h-[min(88vh,88vw)] w-[min(88vh,88vw)] overflow-hidden bg-paper"
             onClick={(e) => e.stopPropagation()}
           >
             <LazyCakeScene config={LAB_CONFIGS[big].config} autoRotate={autoRotate} />

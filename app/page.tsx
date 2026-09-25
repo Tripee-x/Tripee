@@ -1,156 +1,258 @@
+import type { Metadata } from "next";
 import Link from "next/link";
-import { CakePreview } from "@/components/CakePreview";
-import { FSSAI_LICENCE } from "@/lib/docket";
-import { PRESETS } from "@/lib/presets";
-import { priceCake } from "@/lib/pricing";
+import { BuilderComingSoon } from "@/components/shop/BuilderComingSoon";
+import { CakePhoto } from "@/components/shop/CakePhoto";
+import { ProductCard } from "@/components/shop/ProductCard";
+import { ShopFooter } from "@/components/shop/ShopFooter";
+import { ShopHeader } from "@/components/shop/ShopHeader";
+import { listCakes } from "@/lib/cakeData";
+import { CAKE_CATEGORIES, cheapestVariant } from "@/lib/cakes";
+import { getCatalogSnapshot } from "@/lib/catalogData";
 import { formatINR } from "@/lib/format";
-import { servingsLabel } from "@/lib/servings";
+import { priceProduct } from "@/lib/pricing";
+import { sBtn, sEyebrow } from "@/lib/shopUi";
 
-const HERO = PRESETS.find(p => p.slug === "two-tier-celebration")!.config;
+export const metadata: Metadata = {
+  alternates: { canonical: "/" },
+  title: "MakeYourCakes · A little more celebration",
+  description:
+    "Beautiful cakes, baked to order in Hyderabad. Find your flavour, choose your size, and make their day.",
+};
 
-export default function Home() {
+export default async function Home() {
+  const [catalog, cakes] = await Promise.all([
+    getCatalogSnapshot(),
+    listCakes(),
+  ]);
+  const hero =
+    cakes.find((c) => c.isFeatured && cheapestVariant(c)) ??
+    cakes.find((c) => cheapestVariant(c));
+  const variant = hero && cheapestVariant(hero);
+  const price =
+    hero && variant
+      ? priceProduct(
+          { name: hero.name, pricePaise: variant.pricePaise },
+          { delivery: "pickup" },
+          catalog,
+        ).total
+      : null;
+  const featured = [...cakes]
+    .sort(
+      (a, b) =>
+        Number(b.isFeatured) - Number(a.isFeatured) ||
+        a.sortOrder - b.sortOrder,
+    )
+    .slice(0, 8);
+  const categories = CAKE_CATEGORIES.filter((category) =>
+    cakes.some((c) => c.category === category.id),
+  );
   return (
-    <>
-      <header className="mx-auto flex max-w-6xl items-center justify-between px-4 py-4 sm:px-8">
-        <span className="font-mono text-body font-bold tracking-wider">MAKEMYCAKE</span>
-        <nav className="flex items-center gap-5 text-meta">
-          <Link href="/presets" className="text-steel transition-colors hover:text-ink">
-            Presets
-          </Link>
-          <Link
-            href="/build/shape"
-            className="inline-flex min-h-9 items-center rounded-md bg-ink px-3.5 font-medium text-paper transition-colors hover:bg-graphite"
-          >
-            Build a cake
-          </Link>
-        </nav>
-      </header>
-
-      <main>
-        <section className="mx-auto grid max-w-6xl items-center gap-8 px-4 pt-4 pb-12 sm:px-8 lg:grid-cols-[1fr_1.1fr]">
-          <div>
-            <h1 className="text-[clamp(2.4rem,6vw,4.2rem)] leading-[0.95]">
-              Build your cake.<br />Watch it appear.
-            </h1>
-            {/* Was 58 words across five lines, and three of those sentences were
-                the site describing its own mechanics. Nobody buying a cake reads
-                that far before the first button. */}
-            <p className="mt-5 max-w-sm text-lede leading-snug text-graphite">
-              Change anything and the cake changes with it. The price moves at the
-              same moment, and it says why.
-            </p>
-
-            <div className="mt-7 flex flex-wrap gap-3">
-              <Link
-                href="/build/shape"
-                className="inline-flex min-h-12 items-center rounded-md bg-ink px-6 text-item font-medium text-paper transition-colors duration-[--dur-ui] hover:bg-graphite"
-              >
-                Start building
-              </Link>
-              <Link
-                href="/presets"
-                className="inline-flex min-h-12 items-center rounded-md border border-rule-strong px-6 text-item transition-colors duration-[--dur-ui] hover:border-ink"
-              >
-                Start from a preset
-              </Link>
-            </div>
-
-            <p className="mt-6 text-meta leading-relaxed text-steel">
-              Jubilee Hills, Hyderabad. Lead time is stated on every slot. Nothing
-              is charged until we have called you.
-            </p>
-          </div>
-
-          <div className="cake-stage aspect-square overflow-hidden rounded-lg paper-edge">
-            <CakePreview config={HERO} autoRotate />
-          </div>
-        </section>
-
-        {/*
-          Three equal cards in a row is the single most recognisable shape of a
-          page that was generated rather than written. These are three claims of
-          very different weight and they are now laid out that way: the one a
-          customer is actually deciding on gets the room, the other two are
-          supporting evidence underneath it.
-        */}
-        <section className="border-y border-rule bg-paper/60">
-          <div className="mx-auto max-w-6xl px-4 py-14 sm:px-8">
-            <div className="grid gap-10 lg:grid-cols-[1.15fr_1fr] lg:gap-16">
-              <div>
-                <h2 className="text-[clamp(1.6rem,3.2vw,2.4rem)] leading-[1.05]">
-                  The price is on screen the whole time, itemised.
-                </h2>
-                <p className="mt-4 max-w-lg text-lede leading-snug text-graphite">
-                  Every line names a real thing: the sponge, the second tier, the
-                  hand-piped border. It is never revealed at checkout, because by
-                  then you have already spent twenty minutes on it.
-                </p>
+    <div className="s-root min-h-dvh bg-s-cream">
+      <ShopHeader current="home" />
+      <main id="main">
+        <section className="brand-hero">
+          <div className="brand-hero-inner">
+            <div className="s-enter brand-hero-copy">
+              <span className={sEyebrow}>Made in Hyderabad. Made for you.</span>
+              <h1>
+                A little more{" "}
+                <br />
+                <em>celebration.</em>
+              </h1>
+              <p>
+                Big milestones. Small victories. Just-because Tuesdays.
+                Beautiful cakes for everything worth a slice.
+              </p>
+              <div className="flex flex-wrap gap-3">
+                <Link href="/shop" className={sBtn("primary", "lg")}>
+                  Find your cake <span aria-hidden>↗</span>
+                </Link>
+                <Link
+                  href="#the-collection"
+                  className="inline-flex min-h-14 items-center px-3 text-sm font-semibold underline underline-offset-8"
+                >
+                  Explore the collection
+                </Link>
               </div>
-
-              <dl className="grid gap-6 self-center border-l-0 lg:border-l lg:border-rule lg:pl-16">
-                <div>
-                  <dt className="text-item font-medium">Impossible cakes are stopped early</dt>
-                  <dd className="mt-1.5 text-body leading-relaxed text-steel">
-                    Whipped cream will not hold a second tier. The site says that,
-                    in those words, with a one-tap fix, at the moment you choose it.
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-item font-medium">You get a docket, not a screenshot</dt>
-                  <dd className="mt-1.5 text-body leading-relaxed text-steel">
-                    Build, allergens, portions, storage. The form a kitchen works
-                    from, so what arrives is what you designed.
-                  </dd>
-                </div>
-              </dl>
+              <div className="brand-hero-note">
+                <span aria-hidden>✳</span>
+                <span>
+                  Baked to order. A personal touch.
+                  <br />
+                  <strong>No payment until we confirm.</strong>
+                </span>
+              </div>
             </div>
+            {hero && price !== null ? (
+              <div className="brand-hero-art s-enter-media">
+                <span className="brand-seal" aria-hidden>
+                  Made for
+                  <br />
+                  <em>your</em>
+                  <br />
+                  moment
+                </span>
+                <Link
+                  href={`/cakes/${hero.slug}`}
+                  className="brand-hero-photo group"
+                >
+                  <CakePhoto
+                    src={hero.imageUrl}
+                    alt={hero.imageAlt ?? hero.name}
+                    config={hero.config}
+                    priority
+                    sizes="(min-width:1024px) 48vw, 100vw"
+                    className="transition-transform duration-700 motion-safe:group-hover:scale-105"
+                  />
+                </Link>
+                <Link
+                  href={`/cakes/${hero.slug}`}
+                  className="brand-hero-caption"
+                >
+                  <span>
+                    <small>Meet your next favourite</small>
+                    <strong>{hero.name}</strong>
+                  </span>
+                  <span>
+                    From {formatINR(price)} <span aria-hidden>↗</span>
+                  </span>
+                </Link>
+              </div>
+            ) : (
+              <div className="brand-hero-empty">
+                <span aria-hidden>✳</span>
+                <p>Something lovely is in the making.</p>
+                <Link href="/shop" className={sBtn()}>
+                  Visit the cake counter
+                </Link>
+              </div>
+            )}
           </div>
         </section>
-
-        <section className="mx-auto max-w-6xl px-4 py-14 sm:px-8">
-          <div className="mb-6 flex items-baseline justify-between gap-4">
-            <h2 className="text-[clamp(1.5rem,3vw,2rem)]">Or start from one of these</h2>
-            <Link
-              href="/presets"
-              className="shrink-0 text-meta text-steel underline underline-offset-4 transition-colors hover:text-ink"
-            >
-              See all eight
+        <div className="brand-ribbon" aria-label="Our approach">
+          <span>Baked for your occasion</span>
+          <span aria-hidden>✳</span>
+          <span>Your cake. Your message.</span>
+          <span aria-hidden>✳</span>
+          <span>Thoughtfully delivered</span>
+        </div>
+        <section
+          id="the-collection"
+          className="brand-section"
+          aria-labelledby="categories"
+        >
+          <div className="brand-section-head s-rise-in">
+            <div>
+              <span className={sEyebrow}>Follow your cravings</span>
+              <h2 id="categories">A flavour for every feeling.</h2>
+            </div>
+            <Link href="/shop" className="brand-text-link">
+              All {cakes.length} cakes <span aria-hidden>↗</span>
             </Link>
           </div>
-
-          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
-            {PRESETS.slice(0, 3).map((p) => (
-              <Link
-                key={p.slug}
-                href="/presets"
-                className="group overflow-hidden rounded-lg bg-paper paper-edge transition-transform duration-[--dur-ui] ease-[--ease-out] hover:-translate-y-1"
-              >
-                <div className="cake-stage aspect-square">
-                  <CakePreview config={p.config} interactive={false} />
-                </div>
-                <div className="border-t border-rule px-4 py-3">
-                  <div className="flex items-baseline justify-between gap-3">
-                    <span className="text-item font-medium">{p.name}</span>
-                    <span className="shrink-0 font-mono text-meta tabular-nums">
-                      {formatINR(priceCake(p.config).total)}
+          <ul className="brand-categories s-rise-row">
+            {categories.map((category, index) => {
+              const face = cakes.find((c) => c.category === category.id)!;
+              return (
+                <li key={category.slug}>
+                  <Link
+                    href={`/shop?category=${category.slug}`}
+                    className="brand-category group"
+                  >
+                    <div className="brand-category-photo">
+                      <CakePhoto
+                        src={face.imageUrl}
+                        alt=""
+                        config={face.config}
+                        sizes="(min-width:1024px) 16vw, 44vw"
+                        className="transition-transform duration-500 motion-safe:group-hover:scale-105"
+                      />
+                    </div>
+                    <span>
+                      <small>0{index + 1}</small>
+                      {category.name}
+                      <span aria-hidden>↗</span>
                     </span>
-                  </div>
-                  {/* How many people it feeds is the first question anyone
-                      actually has about a cake, and it was nowhere on this page. */}
-                  <p className="mt-1 text-meta text-steel">{servingsLabel(p.config)}</p>
-                </div>
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+          {categories.length === 0 && (
+            <p className="py-8 text-s-bark">
+              Our next collection is being prepared. Please check back soon.
+            </p>
+          )}
+        </section>
+        <section
+          className="border-y border-s-line bg-s-cream-deep/50"
+          aria-labelledby="featured"
+        >
+          <div className="brand-section">
+            <div className="brand-section-head s-rise-in">
+              <div>
+                <span className={sEyebrow}>The cake counter</span>
+                <h2 id="featured">Love at first slice.</h2>
+              </div>
+              <Link href="/shop" className={sBtn("outline")}>
+                Shop the collection ↗
               </Link>
-            ))}
+            </div>
+            <ul className="s-rise-row grid grid-cols-2 gap-x-4 gap-y-8 sm:gap-6 lg:grid-cols-3 xl:grid-cols-4">
+              {featured.map((p) => (
+                <ProductCard key={p.slug} product={p} catalog={catalog} />
+              ))}
+            </ul>
           </div>
         </section>
+        <section className="brand-story" aria-labelledby="our-way">
+          <div className="brand-section brand-story-grid">
+            <div className="s-rise-in">
+              <span className="brand-story-kicker">The MakeYourCakes way</span>
+              <h2 id="our-way">
+                Good cake.
+                <br />
+                Great memories.
+              </h2>
+              <p>
+                It starts with a cake you love. We make it personal, confirm the
+                details with you, and bake for the moment you have in mind.
+              </p>
+              <Link href="/shop" className={sBtn("outline", "lg")}>
+                Make someone’s day ↗
+              </Link>
+            </div>
+            <ol className="brand-promises s-rise-row">
+              {[
+                [
+                  "Pick your favourite",
+                  "Browse the collection and find a flavour that feels like them.",
+                ],
+                [
+                  "Make it personal",
+                  "Choose the size, the sponge and a message from the heart.",
+                ],
+                [
+                  "Leave the baking to us",
+                  "Tell us where and when. We call to confirm before anything goes in the oven.",
+                ],
+              ].map(([title, copy], i) => (
+                <li key={title}>
+                  <span>0{i + 1}</span>
+                  <div>
+                    <h3>{title}</h3>
+                    <p>{copy}</p>
+                  </div>
+                </li>
+              ))}
+            </ol>
+          </div>
+        </section>
+        <section className="brand-section">
+          <BuilderComingSoon />
+        </section>
       </main>
-
-      <footer className="border-t border-rule px-4 py-8 sm:px-8">
-        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 text-meta text-steel">
-          <span>Makemycake · Jubilee Hills, Hyderabad</span>
-          {FSSAI_LICENCE && <span>FSSAI Lic. No. {FSSAI_LICENCE}</span>}
-        </div>
-      </footer>
-    </>
+      <ShopFooter bakery={catalog.bakery} />
+    </div>
   );
 }

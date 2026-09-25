@@ -21,18 +21,20 @@ export default async function LabSoloPage({
   if (!entry) notFound();
 
   return (
-    <main className="min-h-dvh p-4 sm:p-6">
+    <main id="main" className="min-h-dvh p-4 sm:p-6">
       <div className="mb-3 flex items-baseline justify-between gap-4">
         <h1 className="text-sm ">{entry.label}</h1>
         <nav className="flex gap-3 text-meta text-steel">
-          <Link href="/lab" className="underline underline-offset-4">All twelve</Link>
+          <Link href="/lab" className="underline underline-offset-4">
+            All {LAB_CONFIGS.length}
+          </Link>
           {i > 0 && <Link href={`/lab/${i - 1}`}>Prev</Link>}
           {i < LAB_CONFIGS.length - 1 && <Link href={`/lab/${i + 1}`}>Next</Link>}
         </nav>
       </div>
       <p className="mb-4 max-w-2xl text-sm text-steel">{entry.note}</p>
 
-      <div className="h-[78dvh] overflow-hidden rounded-sm bg-paper paper-edge">
+      <div className="h-[78dvh] overflow-hidden bg-paper paper-edge">
         <LabSolo index={i} />
       </div>
     </main>

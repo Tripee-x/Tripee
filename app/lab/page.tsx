@@ -2,13 +2,13 @@ import type { Metadata } from "next";
 import { LabGrid } from "./LabGrid";
 
 export const metadata: Metadata = {
-  title: "Render lab — Makemycake",
+  title: "Render lab — MakeYourCakes",
   robots: { index: false, follow: false },
 };
 
 /**
- * Twelve very different cakes, side by side. Every time a material value or a
- * light changes, all twelve change at once — that is the difference between
+ * Eleven very different cakes, side by side. Every time a material value or a
+ * light changes, all eleven change at once — that is the difference between
  * converging in three days and flailing for two weeks.
  *
  * The judgement test, in order:

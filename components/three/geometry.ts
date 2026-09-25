@@ -23,22 +23,60 @@ export function baseHeight(size: SizeBand): number {
   return (3.6 + DIAMETER_IN[size] * 0.06) * IN;
 }
 
-/** Bundt tins are deeper than a sandwich tin, and it shows. */
-export function heightFor(shape: Shape, size: SizeBand): number {
-  return baseHeight(size) * (shape === "bundt" ? 1.16 : 1);
-}
-
+/**
+ * Diameter step between tiers.
+ *
+ * A tiered cake is baked in tins two or three inches apart — a 10/8/6 or a
+ * 12/9/6 — which is a ratio around 0.75–0.8 per step, not 0.68 and 0.54. The old
+ * numbers stepped in twice as fast as any real tin set, and a top tier that small
+ * makes the whole cake read as a novelty tower rather than as a celebration cake.
+ */
 const TIER_RADIUS_RATIO: Record<number, number[]> = {
   1: [1],
-  2: [1, 0.68],
-  3: [1, 0.76, 0.54],
+  2: [1, 0.72],
+  3: [1, 0.78, 0.58],
 };
 
+/**
+ * Real tiers are all much the same height — they come out of tins of the same
+ * depth. A slight taper upward flatters the stack; 0.9/0.8 is not a taper, it is a
+ * different cake per layer.
+ */
 const TIER_HEIGHT_RATIO: Record<number, number[]> = {
   1: [1],
-  2: [1, 0.86],
-  3: [1, 0.9, 0.8],
+  2: [1, 0.94],
+  3: [1, 0.95, 0.88],
 };
+
+/**
+ * How much each tier of a stack is shortened relative to a single-tier cake.
+ *
+ * At 0.82, on top of the height ratios above, a 5kg three-tier came out 12 inches
+ * across and nine and a half tall — squat, and nothing like the proportions people
+ * are picturing when they order a tiered cake. A real one of that size is closer
+ * to eleven or twelve inches tall.
+ */
+const STACK_HEIGHT_FACTOR = 0.94;
+
+/**
+ * The shape of one tier of a stack.
+ *
+ * `docs/SESSION-SUMMARY.md` closes on this as an open question: a two-tier heart
+ * stacks a heart on a heart, which reads oddly, and real tiered hearts are a heart
+ * over a round. It reads oddly for a concrete reason — a heart is a silhouette,
+ * and a silhouette only works when you can see the whole of it. Stacked, each
+ * heart eats the cleft of the one below it, so what you get is neither one heart
+ * nor two: it is a lumpy round cake with a notch in the top.
+ *
+ * So the heart goes where it can be seen whole, which is the top, and everything
+ * under it is round. A single-tier heart is its own top tier and is unaffected.
+ */
+export function tierShape(shape: Shape, index: number, tierCount: number): Shape {
+  if (shape === "heart" && tierCount > 1) {
+    return index === tierCount - 1 ? "heart" : "round";
+  }
+  return shape;
+}
 
 export interface TierDims {
   radius: number;
@@ -47,9 +85,9 @@ export interface TierDims {
   y: number;
 }
 
-export function tierDims(size: SizeBand, tiers: number, shape: Shape = "round"): TierDims[] {
+export function tierDims(size: SizeBand, tiers: number): TierDims[] {
   const r0 = baseRadius(size);
-  const h0 = heightFor(shape, size) * (tiers === 1 ? 1 : 0.82);
+  const h0 = baseHeight(size) * (tiers === 1 ? 1 : STACK_HEIGHT_FACTOR);
   const rr = TIER_RADIUS_RATIO[tiers] ?? TIER_RADIUS_RATIO[1];
   const hr = TIER_HEIGHT_RATIO[tiers] ?? TIER_HEIGHT_RATIO[1];
 
@@ -66,6 +104,9 @@ export function tierDims(size: SizeBand, tiers: number, shape: Shape = "round"):
 /* ------------------------------------------------------------------ *
  * 2D profiles
  * ------------------------------------------------------------------ */
+
+/** 0–1 easing with zero first *and* second derivative at both ends. */
+const smootherstep = (t: number) => t * t * t * (t * (t * 6 - 15) + 10);
 
 function roundedPolygon(pts: [number, number][], r: number): THREE.Shape {
   const s = new THREE.Shape();
@@ -209,6 +250,58 @@ function weldNormals(g: THREE.BufferGeometry) {
 }
 
 /**
+ * One millimetre, in world units. Every figure §5.3 gives is in millimetres and
+ * one world unit is 90.7mm, so writing them as `0.3 * MM` is the only way the
+ * numbers in the code can be checked against the numbers in the document.
+ */
+export const MM = IN / 25.4;
+
+/**
+ * How far a squeezed band bellies out past its own rim.
+ *
+ * §5.3, requirement 3: the filling "squeezes at the cut edge: a 0.3mm bulge where
+ * it meets the exterior, with a very slight sag." It is an absolute, not a
+ * fraction of the radius — paste pressed out from between two layers does not know
+ * how wide the cake is.
+ *
+ * 0.3mm is well under a pixel of silhouette at any framing this site uses, and it
+ * is not meant to be read as one. What it buys is shading: bowing the wall swings
+ * its normal through about 13 degrees over the height of the band, so the belly
+ * takes the key light and the two rims fall away from it.
+ */
+export const FILLING_SQUEEZE = 0.3 * MM;
+
+/**
+ * How wide the bevel round a cut face is.
+ *
+ * §5.3, requirement 4: "The cut face has a 0.5mm bevel with a soft highlight, so it
+ * does not read as a boolean operation." That is the whole of the requirement, and
+ * the reason is the one it gives: a perfectly sharp edge between two flat faces is
+ * the signature of a subtraction, because nothing a knife touches is that sharp.
+ */
+export const CUT_BEVEL = 0.5 * MM;
+
+/** Where the belly sits up the band. Below the middle — that part is the sag. */
+const SQUEEZE_BELLY = 0.42;
+
+/**
+ * A squeezed band's bow: 0 at both rims, 1 at the belly.
+ *
+ * Smoothstep on each side, so the wall leaves both bevel arcs with zero slope and
+ * meets itself with zero slope at the belly. No crease anywhere for a specular to
+ * catch on, which matters more here than the shape does — a band this small is
+ * read entirely off its shading.
+ *
+ * The belly below the midline is the whole of the "very slight sag": paste
+ * squeezed out of a stack slumps before it sets, so the fat of the band sits low
+ * and the shadow it throws lands on the sponge underneath it.
+ */
+function squeezeBow(t: number): number {
+  const u = t < SQUEEZE_BELLY ? t / SQUEEZE_BELLY : (1 - t) / (1 - SQUEEZE_BELLY);
+  return u * u * (3 - 2 * u);
+}
+
+/**
  * Round tiers get a lathe so the base can flare very slightly, as cakes settle.
  *
  * `wallSteps` subdivides the straight side wall. The profile used to jump
@@ -220,7 +313,8 @@ function weldNormals(g: THREE.BufferGeometry) {
  * of them.
  */
 function lathePoints(
-  r: number, h: number, bevel: number, flare = 1.012, wallSteps = 26,
+  r: number, h: number, bevel: number,
+  flare = 1.012, wallSteps = 26, squeeze = 0,
 ): THREE.Vector2[] {
   const pts: THREE.Vector2[] = [];
   const rb = r * flare;
@@ -246,7 +340,10 @@ function lathePoints(
   const x0 = rb;
   for (let i = 1; i <= wallSteps; i++) {
     const t = i / wallSteps;
-    pts.push(new THREE.Vector2(x0 + (r - x0) * t, y0 + (y1 - y0) * t));
+    pts.push(new THREE.Vector2(
+      x0 + (r - x0) * t + squeezeBow(t) * squeeze,
+      y0 + (y1 - y0) * t,
+    ));
   }
 
   arc(r - bevel, h - bevel, bevel, 0, Math.PI / 2);
@@ -260,6 +357,78 @@ function lathePoints(
   }
 
   return pts;
+}
+
+/**
+ * A lathe profile turned into a *band* of thickness `t`, hugging its inside.
+ *
+ * This is what lets the frosting show its own thickness at a cut. §5.3 puts it
+ * first of the five things the cut surface needs, and is blunt about why: "The
+ * frosting shell shows its thickness at the cut as a visible 2–4mm band. Right now
+ * the shell reads as zero-thickness paint, which is the main reason the section
+ * looks fake."
+ *
+ * The shell is a surface, not a solid, so at a cut there was nothing to see — you
+ * looked past the 3–4mm of air between shell and sponge straight to the backface of
+ * the far wall. The air was already there and correctly sized (see shellThickness);
+ * nothing filled it.
+ *
+ * `capGeometry` already knows how to triangulate a profile and stand it up in the
+ * cut plane. Hand it this instead of the whole profile and the flat cross-section
+ * it produces is the frosting band rather than a slab across the whole cake — which
+ * is the thing `capCut: false` exists to prevent, and why this is a separate door
+ * rather than a flag on that one.
+ *
+ * The offset runs along each point's own 2D normal, so the band keeps its width
+ * round the base bevel, up the wall and over the lid, the way a scraper leaves it.
+ * The loop stays a simple polygon: the outer edge runs base → rim → lid, the inner
+ * edge returns lid → rim → base, and on a round tier both closing segments lie on
+ * the axis at x = 0. That holds while t stays under the bevel B, which it does at
+ * every size the catalogue sells.
+ */
+/**
+ * The outward 2D normal of a profile at point `i`.
+ *
+ * Central-difference tangent, so a point on an arc leans on both its neighbours
+ * rather than on whichever segment happens to come first, turned a quarter-turn:
+ * (ty, -tx)/len.
+ *
+ * Checked against the three places it matters, in the profile's own winding order
+ * (axis → rim → up the wall → over the lid → axis):
+ *   base, tangent (+1, 0)  →  (0, -1)  points at the board;
+ *   wall, tangent (0, +1)  →  (+1, 0)  points away from the axis;
+ *   lid,  tangent (-1, 0)  →  (0, +1)  points at the sky.
+ * All three are outward, so subtracting moves into the cake.
+ */
+function outwardNormal(profile: THREE.Vector2[], i: number): THREE.Vector2 {
+  const prev = profile[Math.max(0, i - 1)];
+  const next = profile[Math.min(profile.length - 1, i + 1)];
+  const tx = next.x - prev.x;
+  const ty = next.y - prev.y;
+  const len = Math.hypot(tx, ty) || 1;
+  return new THREE.Vector2(ty / len, -tx / len);
+}
+
+/**
+ * A profile moved `t` into its own solid, along its own normals.
+ *
+ * The clamps keep the two axis points on the axis: their normals are purely
+ * vertical, so x never moves off 0 there, and an inset profile therefore closes on
+ * the same line the original does rather than opening a groove down the middle of
+ * the cake.
+ */
+function insetProfile(profile: THREE.Vector2[], t: number): THREE.Vector2[] {
+  return profile.map((p, i) => {
+    const n = outwardNormal(profile, i);
+    return new THREE.Vector2(
+      Math.max(0, p.x - n.x * t),
+      Math.max(0, p.y - n.y * t),
+    );
+  });
+}
+
+function bandProfile(profile: THREE.Vector2[], t: number): THREE.Vector2[] {
+  return [...profile, ...insetProfile(profile, t).reverse()];
 }
 
 /* ------------------------------------------------------------------ *
@@ -287,13 +456,6 @@ export function phiOf(x: number, z: number): number {
   return Math.atan2(x, z);
 }
 
-function angleKept(phi: number, sector: Sector): boolean {
-  let d = phi - sector.centre;
-  while (d > Math.PI) d -= Math.PI * 2;
-  while (d < -Math.PI) d += Math.PI * 2;
-  return Math.abs(d) > sector.width / 2;
-}
-
 export interface BodyOpts {
   shape: Shape;
   radius: number;
@@ -304,30 +466,65 @@ export interface BodyOpts {
   /** Omit for a whole cake; supply to cut a wedge out of it. */
   sector?: Sector;
   /**
-   * Close the cut with a flat face. True for anything solid — the sponge, the
+   * Close a lathe's cut with a flat face. True for anything solid — the sponge, the
    * filling. False for the frosting: a capped frosting shell puts a slab of
-   * buttercream across the whole cross-section and hides the very layers the
-   * cut exists to show. Left open, it reads as the thin skin it actually is.
+   * buttercream across the whole cross-section and hides the very layers the cut
+   * exists to show. Left open, it reads as the thin skin it actually is, and the
+   * lathe's profile carries the lid round with it either way.
+   *
+   * Extruded shapes ignore this — their wall follows the whole outline, the two
+   * radial cut edges included, and there is no way to ask ExtrudeGeometry for a
+   * wall with two faces missing. `shellGeometry` sets those cuts back instead.
    */
   capCut?: boolean;
+  /**
+   * Close a lathe's cut with a *band* of this thickness instead of a full face —
+   * the frosting showing its own edge at the cut (§5.3, requirement 1).
+   *
+   * This is the middle option between `capCut: true` (a solid cross-section, right
+   * for sponge and filling) and `capCut: false` (nothing at all, which is what made
+   * the shell read as zero-thickness paint). Only lathes need it: an extruded
+   * shape's wall already follows its two radial cut edges and so already shows a
+   * cross-section — see `setBack`, which pushes those edges *behind* the sponge's
+   * for exactly that reason.
+   */
+  capBand?: number;
+  /**
+   * Belly this body's wall out past its own rim — the filling squeezing where it
+   * meets the exterior (§5.3, requirement 3). See FILLING_SQUEEZE.
+   *
+   * Setting it also drops the base flare, because the two are the same millimetres
+   * pulling opposite ways. A tier's 1.2% flare is a cake settling under its own
+   * weight over 100mm of height; inherited by a 3mm band it becomes a 1.4mm wedge —
+   * five times the bulge, and running the other way, so the band came out a cone
+   * and shaded like one. A band does not settle. It gets squashed.
+   *
+   * Round only. An extruded shape's slab already carries ExtrudeGeometry's bevel
+   * round both ends, which is convex in the right direction and reads as a
+   * meniscus; what it cannot be asked for is a belly off the centre, and there is
+   * no per-step radial control on ExtrudeGeometry to add one. The sag is a round
+   * cake's for now.
+   */
+  squeeze?: number;
 }
 
 export function tierGeometry({
-  shape, radius, height, segments = 72, bevel, sector, capCut = true,
+  shape, radius, height, segments = 72, bevel, sector, capCut = true, capBand,
+  squeeze,
 }: BodyOpts): THREE.BufferGeometry {
   const b = bevel ?? Math.min(radius * 0.09, height * 0.18, 0.07);
 
   if (shape === "round") {
-    const profile = lathePoints(radius, height, b);
+    const profile = squeeze
+      ? lathePoints(radius, height, b, 1, 26, squeeze)
+      : lathePoints(radius, height, b);
     return sector
-      ? cutLathe(profile, segments, sector, capCut)
+      ? cutLathe(profile, segments, sector, capCut, capBand, CUT_BEVEL)
       : latheWithUV(profile, segments);
   }
 
-  if (shape === "bundt") return bundtGeometry(radius, height, segments, sector, capCut);
-
   const full = polygonFor(shape, radius - b);
-  const inset = sector ? cutShape(full, sector, capCut) : full;
+  const inset = sector ? cutShape(full, sector, b) : full;
   const g = new THREE.ExtrudeGeometry(inset, {
     depth: Math.max(0.01, height - b * 2),
     bevelEnabled: true,
@@ -357,6 +554,16 @@ function cutLathe(
   segments: number,
   sector: Sector,
   capped = true,
+  capBand?: number,
+  /**
+   * Bevel the cut faces by this much — §5.3, requirement 4. See beveledCap.
+   *
+   * Off by default, and passed only by the round path, because the frosting shell
+   * does not want it. The shell caps through `capBand`, and
+   * that band is 2–4mm wide: 0.5mm off each side of it is a third of the one
+   * feature §5.3 puts first.
+   */
+  rim = 0,
 ): THREE.BufferGeometry {
   const half = sector.width / 2;
   const phiStart = sector.centre + half;
@@ -364,14 +571,31 @@ function cutLathe(
 
   const kept = Math.max(8, Math.round(segments * (phiLength / (Math.PI * 2))));
   const wall = latheWithUV(profile, kept, phiStart, phiLength);
-  if (!capped) return wall;
 
-  // The two cut faces look in opposite directions — away from the missing
-  // wedge on each side. One of them therefore needs its winding reversed, or it
-  // is back-face culled and you see straight through the cake.
+  /*
+   * Three ways to close a cut, not two.
+   *
+   * A solid body caps with its whole profile. The frosting shell caps with a band
+   * of its own thickness — see bandProfile. And `capped: false` with no band is
+   * still available, and still means nothing at all.
+   */
+  const band = capBand !== undefined && capBand > 1e-6;
+  if (!capped && !band) return wall;
+  const capFrom = band ? bandProfile(profile, capBand!) : profile;
+
+  /*
+   * The two cut faces look in opposite directions — away from the missing wedge on
+   * each side. One of them therefore needs its winding reversed, or it is back-face
+   * culled and you see straight through the cake.
+   *
+   * `phiStart` is the *end* of the removed wedge, so its face looks back down the
+   * decreasing-φ side — which is where ShapeGeometry's own +Z normal ends up once
+   * the profile is stood up. That one is already right; the far face is the one to
+   * turn round.
+   */
   const caps = [
-    capGeometry(profile, phiStart, true),
-    capGeometry(profile, phiStart + phiLength, false),
+    capGeometry(capFrom, phiStart, false, band ? 0 : rim),
+    capGeometry(capFrom, phiStart + phiLength, true, band ? 0 : rim),
   ];
   const merged = mergeGeometries([wall, ...caps], false);
 
@@ -386,21 +610,120 @@ function cutLathe(
 }
 
 /**
+ * A cut face with a bevel round its rim — §5.3, requirement 4.
+ *
+ * The bevel is a `b`-wide ring inside the cap's own outline, kept **in the plane of
+ * the cap** and given normals tilted 45 degrees toward the surface the rim runs
+ * into. So it shades as a chamfer without being displaced as one.
+ *
+ * That is a deliberate choice, not a shortcut. A displaced chamfer has to take the
+ * material off *both* faces that meet at the edge: the cap insets by b, and the
+ * wall must set back by b as well, or the two no longer meet and the cut opens a
+ * b-wide slot to the inside of the cake. Setting a lathe's wall back means
+ * shrinking phiLength, and an angle is a fixed *arc* — so a single dφ is 0.5mm of
+ * setback at the rim and almost nothing by the time the lid reaches the axis, which
+ * is a chamfer that tapers to nothing exactly where the lid's edge is most visible.
+ * Doing it properly means rebuilding the cut as a swept surface.
+ *
+ * And it would buy nothing. 0.5mm is about one pixel at the framings this site
+ * uses, so a displaced chamfer and a shaded one are the same handful of pixels; the
+ * difference between them is entirely the highlight, which is the half the document
+ * actually asks for. What the in-plane version cannot do is open a seam.
+ *
+ * Round lathes only — see the caller.
+ */
+function beveledCap(profile: THREE.Vector2[], b: number): THREE.BufferGeometry {
+  const n = profile.length;
+  const inner = insetProfile(profile, b);
+
+  const pos: number[] = [], nor: number[] = [], uv: number[] = [], idx: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const nrm = outwardNormal(profile, i);
+    // 45 degrees: halfway between the cut face's own +Z and the outward normal of
+    // whatever the rim runs into — the wall on the way up, the lid on the way back.
+    const k = 1 / Math.SQRT2;
+
+    pos.push(profile[i].x, profile[i].y, 0);
+    nor.push(nrm.x * k, nrm.y * k, k);
+    uv.push(profile[i].x, profile[i].y);
+
+    pos.push(inner[i].x, inner[i].y, 0);
+    nor.push(0, 0, 1);
+    uv.push(inner[i].x, inner[i].y);
+  }
+
+  /*
+   * Quads along the profile only, never across the closing segment.
+   *
+   * ShapeGeometry closes the outline on the axis, from (0, h) back to (0, 0), and
+   * insetProfile leaves the two axis points on the axis — so the inner outline
+   * closes on that same line, just shorter. The sliver between the two closing
+   * segments therefore has no area, and skipping it leaves the ring plus the inner
+   * face covering exactly the outer face's area. No hole, and no bevel down the
+   * crease where the two cut faces meet, which is not an edge a knife makes.
+   */
+  for (let i = 0; i < n - 1; i++) {
+    const a = 2 * i, d = 2 * i + 1, bb = 2 * (i + 1), c = 2 * (i + 1) + 1;
+    idx.push(a, bb, c, a, c, d);
+  }
+
+  const ring = new THREE.BufferGeometry();
+  ring.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  ring.setAttribute("normal", new THREE.Float32BufferAttribute(nor, 3));
+  // (x, y), which is what ShapeGeometry's own WorldUVGenerator lays down, so the
+  // ring and the face it rims read one continuous set of UVs.
+  ring.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
+  ring.setIndex(idx);
+
+  const face = new THREE.ShapeGeometry(new THREE.Shape(inner));
+  const merged = mergeGeometries([face, ring], false);
+  if (!merged) return face;
+  face.dispose();
+  ring.dispose();
+  return merged;
+}
+
+/**
  * The profile itself, triangulated flat and stood up in the plane at `phi`.
  * Rendered double-sided, because a cut face is looked at from whichever side
  * the customer happens to have rotated towards.
+ *
+ * `rim` bevels the edge — see beveledCap.
  */
 function capGeometry(
   profile: THREE.Vector2[],
   phi: number,
   flip: boolean,
+  rim = 0,
 ): THREE.BufferGeometry {
-  const shape = new THREE.Shape(profile.map(p => new THREE.Vector2(Math.max(0, p.x), p.y)));
-  const g = new THREE.ShapeGeometry(shape);
+  const pts = profile.map(p => new THREE.Vector2(Math.max(0, p.x), p.y));
 
-  // ShapeGeometry lies in XY. Lathe places a profile point at
-  // (x·sin φ, y, x·cos φ), so rotating about Y by (π/2 − φ) lands it correctly.
-  g.rotateY(Math.PI / 2 - phi);
+  /*
+   * The guard is the inset turning the outline inside out. Every profile the
+   * catalogue renders clears it by a wide margin — the tightest is a filling band
+   * at 3.6mm against a 2mm floor — but an inverted polygon triangulates into
+   * overlapping garbage rather than failing, so it is worth one comparison to make
+   * sure a future profile cannot get there quietly.
+   */
+  const ys = pts.map(p => p.y);
+  const span = Math.max(...ys) - Math.min(...ys);
+  const g = rim > 0 && span > rim * 4
+    ? beveledCap(pts, rim)
+    : new THREE.ShapeGeometry(new THREE.Shape(pts));
+
+  /*
+   * ShapeGeometry lies in XY. Lathe places a profile point at
+   * (x·sin φ, y, x·cos φ), and rotateY(θ) sends (x, y, 0) to (x·cos θ, y, −x·sin θ) —
+   * so the angle that lands the profile on the lathe's own plane is (φ − π/2).
+   *
+   * It used to be (π/2 − φ), which is the same rotation the other way and puts the
+   * cap at (π − φ): both cut faces came out mirrored onto the far side of the cake,
+   * buried inside solid sponge where nothing could see them, leaving the actual cut
+   * uncapped. Every lathe cutaway was hollow — you looked straight through
+   * the slice at the inside of the far wall and at the pac-man notch in the layer
+   * discs across the cake.
+   */
+  g.rotateY(phi - Math.PI / 2);
 
   if (flip) {
     // Reverse the triangle winding, and flip the normals to match. The normals
@@ -440,90 +763,95 @@ function capGeometry(
 }
 
 /**
- * Clip a 2D outline to the kept sector and close it through the centre, so an
- * extruded shape loses the same wedge a lathe does. Extrude caps the result on
- * its own, which is why this does not need explicit cut faces.
+ * Clip a 2D outline to the kept sector and close it through the axis, so an extruded
+ * shape loses the same wedge a lathe does. Extrude caps the result on its own, which
+ * is why this does not need explicit cut faces — and why `bevel`, the extrude's own
+ * `bevelSize`, has to be compensated for below.
  */
-function cutShape(shape: THREE.Shape, sector: Sector, capped = true): THREE.Shape {
+function cutShape(shape: THREE.Shape, sector: Sector, bevel: number): THREE.Shape {
   const pts = shape.getSpacedPoints(288);
+  const n = pts.length;
+  const half = sector.width / 2;
 
-  // The extrude is rotated -90° about X, which sends shape Y to world -Z.
-  const phi = (p: THREE.Vector2) => phiOf(p.x, -p.y);
+  /*
+   * The wedge, as two half-planes rather than two angles — and each one pushed
+   * `bevel` further out of the cake than the sector asked for.
+   *
+   * That offset is the compensation for `ExtrudeGeometry`, which shifts the whole
+   * outline outward by `bevelSize` across the body of the extrusion. On the
+   * perimeter that is paid for by extruding `polygonFor(radius - b)`; on the two
+   * radial edges of the wedge it means the cut creeps into the void. Measured on a
+   * square at bevel 0.1 the wedge came out 0.07rad narrow at the rim and *half* the
+   * asked-for angle near the axis, because the apex had slid off-centre — which on
+   * a frosting shell, whose bevel is the heaviest in the cake, was enough to plant
+   * the shell's cut face in front of the sponge's and hide the cross-section.
+   *
+   * A world angle θ points (sin θ, −cos θ) in shape space, so (cos θ, sin θ) is its
+   * plane's normal there; signing it by which side of the wedge it bounds makes
+   * "kept" the same test on both.
+   */
+  const normal = (s: 1 | -1) => {
+    const th = sector.centre + s * half;
+    return new THREE.Vector2(Math.cos(th) * s, Math.sin(th) * s);
+  };
+  const nPos = normal(1), nNeg = normal(-1);
+  const keep = pts.map(p => p.dot(nPos) >= bevel || p.dot(nNeg) >= bevel);
+  if (!keep.some(k => k) || keep.every(k => k)) return shape;
 
-  const kept: THREE.Vector2[] = [];
-  for (let i = 0; i < pts.length; i++) {
-    if (angleKept(phi(pts[i]), sector)) kept.push(pts[i]);
-  }
-  if (kept.length < 3) return shape;
+  // The run of kept points, found by the one place it starts rather than by
+  // guessing at a gap in the list.
+  const start = keep.findIndex((k, i) => k && !keep[(i - 1 + n) % n]);
+  if (start < 0) return shape;
 
-  // Rotate the list so the run of kept points is contiguous rather than wrapped.
-  let breakAt = 0;
-  for (let i = 0; i < kept.length; i++) {
-    const prev = kept[(i - 1 + kept.length) % kept.length];
-    if (kept[i].distanceTo(prev) > shape.getLength() / 12) { breakAt = i; break; }
-  }
-  const ordered = [...kept.slice(breakAt), ...kept.slice(0, breakAt)];
+  const ordered: THREE.Vector2[] = [];
+  for (let i = 0; i < n && keep[(start + i) % n]; i++) ordered.push(pts[(start + i) % n]);
+  if (ordered.length < 3) return shape;
+
+  /*
+   * Both ends of that run land wherever the sampling happened to fall, up to one
+   * sample outside the wedge — 0.045rad of slop at mid-radius on a square, enough
+   * for the two sides of one wedge to disagree by 3°. So each end is walked back
+   * onto the exact plane it crossed, which is whichever of the two it sits nearer.
+   */
+  const nearer = (p: THREE.Vector2) => (p.dot(nPos) < p.dot(nNeg) ? nPos : nNeg);
+  const last = ordered.length - 1;
+  const before = pts[(start - 1 + n) % n];
+  const after = pts[(start + ordered.length) % n];
+  ordered[0] = onPlane(before, ordered[0], nearer(ordered[0]), bevel) ?? ordered[0];
+  ordered[last] = onPlane(after, ordered[last], nearer(ordered[last]), bevel) ?? ordered[last];
+
+  /*
+   * Closed through the apex, which is where those two offset planes cross rather
+   * than the centre. Clamped so a heavy bevel on a small cake cannot push it out
+   * past the outline and fold the polygon over itself; at that point the cut is
+   * slightly shy of the axis, which is invisible next to a wedge folded inside out.
+   */
+  const reach = Math.min(
+    bevel / Math.max(0.25, Math.sin(half)),
+    0.4 * Math.min(...pts.map(p => p.length())),
+  );
+  const apex = new THREE.Vector2(-Math.sin(sector.centre), Math.cos(sector.centre))
+    .multiplyScalar(reach);
 
   const out = new THREE.Shape();
-  if (capped) {
-    // Closed through the centre, so the extrude fills the cut face.
-    out.moveTo(0, 0);
-    for (const p of ordered) out.lineTo(p.x, p.y);
-  } else {
-    // Closed just inside the outline instead, leaving a thin band rather than
-    // a solid wedge of frosting across the cross-section.
-    const inner = ordered.map(p => new THREE.Vector2(p.x, p.y).multiplyScalar(0.965));
-    out.moveTo(ordered[0].x, ordered[0].y);
-    for (const p of ordered.slice(1)) out.lineTo(p.x, p.y);
-    for (const p of inner.reverse()) out.lineTo(p.x, p.y);
-  }
+  out.moveTo(apex.x, apex.y);
+  for (const p of ordered) out.lineTo(p.x, p.y);
   out.closePath();
   return out;
 }
 
-function bundtGeometry(
-  r: number,
-  h: number,
-  segments: number,
-  sector?: Sector,
-  capCut = true,
-): THREE.BufferGeometry {
-  const ri = r * 0.36;
-  const b = Math.min(r * 0.1, h * 0.2);
-  // Wound so the surface normals face out of the ring, not into it. Reverse this
-  // order and the cake renders inside-out.
-  const pts: THREE.Vector2[] = [
-    new THREE.Vector2(ri, 0),
-    new THREE.Vector2(r - b, 0),
-    new THREE.Vector2(r, b),
-    new THREE.Vector2(r, h * 0.5),
-    new THREE.Vector2(r * 0.97, h * 0.74),
-    new THREE.Vector2(r * 0.86, h * 0.92),
-    new THREE.Vector2(r * 0.68, h),
-    new THREE.Vector2(r * 0.5, h * 0.98),
-    new THREE.Vector2(ri * 1.3, h * 0.9),
-    new THREE.Vector2(ri, h * 0.72),
-    new THREE.Vector2(ri, 0),
-  ];
-
-  const g = sector ? cutLathe(pts, segments, sector, capCut) : latheWithUV(pts, segments);
-  // Radial fluting — the thing that makes a bundt a bundt.
-  const pos = g.attributes.position as THREE.BufferAttribute;
-  const flutes = 12;
-  for (let i = 0; i < pos.count; i++) {
-    const x = pos.getX(i), z = pos.getZ(i);
-    const rad = Math.hypot(x, z);
-    if (rad < 1e-5) continue;
-    const t = THREE.MathUtils.clamp((rad - ri) / (r - ri), 0, 1);
-    const theta = Math.atan2(z, x);
-    const k = 1 + 0.11 * t * Math.cos(flutes * theta);
-    pos.setX(i, (x / rad) * rad * k);
-    pos.setZ(i, (z / rad) * rad * k);
-  }
-  pos.needsUpdate = true;
-  g.computeVertexNormals();
-  weldNormals(g);
-  return g;
+/**
+ * Where the segment `a`→`b` crosses the plane `nrm · p = d`, in shape space. Null
+ * if it does not, which leaves the caller on its sampled point.
+ */
+function onPlane(
+  a: THREE.Vector2, b: THREE.Vector2, nrm: THREE.Vector2, d: number,
+): THREE.Vector2 | null {
+  const da = a.dot(nrm) - d;
+  const db = b.dot(nrm) - d;
+  if (Math.abs(da - db) < 1e-9) return null;
+  const t = da / (da - db);
+  return t >= 0 && t <= 1 ? new THREE.Vector2().lerpVectors(a, b, t) : null;
 }
 
 /* ------------------------------------------------------------------ *
@@ -532,8 +860,10 @@ function bundtGeometry(
 
 const FINISH_AMPLITUDE: Record<Finish, number> = {
   smooth: 0.006,
-  rustic: 0.042,
-  combed: 0.022,
+  rustic: 0.034,
+  // 0.022 was a moulding profile and 0.014 was invisible on a 0.5kg cake, which
+  // is a customer paying for a serrated-comb finish and getting a plain one.
+  combed: 0.018,
   ombre: 0.008,
   ruffle: 0.008,   // the ruffles themselves are instanced on top
   rosette: 0.008,  // ditto
@@ -551,6 +881,29 @@ const FINISH_FREQUENCY: Record<Finish, number> = {
 };
 
 /**
+ * The shell's cut, moved back out of the sponge's way.
+ *
+ * Only extruded shapes need this. A lathe can be left open at the cut — see
+ * BodyOpts.capCut — but an extrude's wall runs round the whole outline, so a cut
+ * square, heart, rectangle or hexagon gets a slab of frosting across its
+ * cross-section whether it wants one or not. Coplanar with the sponge's own cut
+ * face, and bigger, the frosting won the depth test and hid the very layers the cut
+ * exists to show; that is what the old thin-band workaround was avoiding, at the
+ * price of the entire frosting lid.
+ *
+ * So the wedge is widened for the shell alone, by enough that its cut face — noise
+ * displacement and all — stays behind the sponge's. `amp` is the finish's
+ * displacement, doubled because a couple of the finishes stack a second term on top
+ * of it, plus 3mm for the residual in the bevel compensation in `cutShape`.
+ */
+function setBack(sector: Sector, radius: number, amp: number): Sector {
+  return {
+    centre: sector.centre,
+    width: sector.width + 2 * ((amp * 2 + 0.03) / Math.max(0.2, radius)),
+  };
+}
+
+/**
  * The shell is the tier profile grown by the frosting thickness, then pushed
  * along its own normals by seeded noise. Seeded, because a cake that reshuffles
  * on every React render looks broken.
@@ -559,26 +912,85 @@ export function shellGeometry(
   opts: BodyOpts & { finish: Finish; seed: number; thickness?: number },
 ): THREE.BufferGeometry {
   const t = opts.thickness ?? Math.max(0.022, opts.radius * 0.035);
+  const H = opts.height + t;
+  const B = Math.min((opts.radius + t) * 0.13, H * 0.2, 0.1);
+  const amp = FINISH_AMPLITUDE[opts.finish] * (opts.radius / 1.1);
+  const lathe = opts.shape === "round";
   const g = tierGeometry({
     ...opts,
-    // Frosting is a skin, not a solid. Leaving the cut open lets the sponge
-    // cross-section behind it show through.
+    // Frosting is a skin, not a solid.
     capCut: false,
+    /*
+     * ...but a skin has an edge, and at a cut you are looking straight at it.
+     * §5.3, requirement 1. Lathes only: an extruded shape's wall already carries
+     * its own cross-section, which is what `setBack` on the next line is
+     * compensating for.
+     */
+    capBand: lathe && opts.sector ? t : undefined,
+    sector: opts.sector && (lathe ? opts.sector : setBack(opts.sector, opts.radius, amp)),
     radius: opts.radius + t,
-    height: opts.height + t,
-    bevel: Math.min((opts.radius + t) * 0.13, (opts.height + t) * 0.2, 0.1),
+    height: H,
+    bevel: B,
   });
+  /*
+   * Before displacing, not just after.
+   *
+   * `ExtrudeGeometry` keeps its lid and its side wall on separate vertices that
+   * happen to share a position, with the two surfaces' own normals. Displace along
+   * those and the seam splits — a hairline crack right round the top rim. It never
+   * showed on a whole cake, because with the frosting closed there is nothing behind
+   * it to see; on a cut cake the sponge is rendered, and the crack came out as a
+   * dashed brown line along the rim of the lid.
+   */
+  weldNormals(g);
 
-  const amp = FINISH_AMPLITUDE[opts.finish] * (opts.radius / 1.1);
   const freq = FINISH_FREQUENCY[opts.finish];
   const rng = mulberry32(opts.seed);
   const ox = rng() * 100, oy = rng() * 100, oz = rng() * 100;
+  // A fourth offset off the same stream. No new field in lib/seed's SEEDED array,
+  // so nothing that is already hashed changes meaning — this is another draw on
+  // randomness the cake already had.
+  const ow = rng() * 100;
 
   const pos = g.attributes.position as THREE.BufferAttribute;
   const nor = g.attributes.normal as THREE.BufferAttribute;
 
+  // The top of the side wall: where a scraper stops and frosting gathers.
+  const wallTop = H - B;
+
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+    const sideness = 1 - Math.abs(nor.getY(i));
+
+    /*
+     * How much of this vertex's normal points away from the axis, and from that,
+     * whether it is on a cut face.
+     *
+     * Every displacement below this line was written for a closed cake, where the
+     * only surfaces are a wall and a lid. The band caps added at the cut are a
+     * third kind of surface and they break both assumptions: their normals are
+     * horizontal, so `sideness` reads 1 and calls them wall, and they are *flat in
+     * a plane through the axis*, so moving them radially slides them along
+     * themselves and moving them along their normal lifts them out of plane.
+     *
+     * The two facts separate all three cleanly:
+     *
+     *   surface      sideness   radialness   cutFace
+     *   wall            1           1           0
+     *   lid             0           0           0
+     *   cut cap         1           0           1
+     *
+     * `cutFace` is the product that isolates the third row. It is a smooth factor
+     * rather than a test, because the cap's outer rim shares its vertices with the
+     * wall's cut edge — weldNormals above has already averaged their normals — so
+     * those land mid-scale at roughly 0.3 and must keep moving *with* the wall or
+     * the band tears away from the surface it belongs to.
+     */
+    const radius0 = Math.hypot(x, z);
+    const radialness = radius0 > 1e-4
+      ? Math.abs((nor.getX(i) * x + nor.getZ(i) * z) / radius0)
+      : 0;
+    const cutFace = sideness * (1 - radialness);
 
     let d = (fbm3(x * freq + ox, y * freq + oy, z * freq + oz, 3) - 0.5) * 2 * amp;
 
@@ -589,22 +1001,91 @@ export function shellGeometry(
     // actually leave: a serrated scraper cuts 2-3mm ridges, a bench scraper
     // leaves a track you have to catch in the light.
     if (opts.finish === "combed") {
-      const sideness = 1 - Math.abs(nor.getY(i));
-      d += Math.sin(y * 78) * amp * 1.15 * sideness;
+      // Still a stack of plates at 1.15 of a 0.022 amplitude: that is a 3.4mm
+      // peak-to-trough ridge every 7mm, which is a moulding profile rather than a
+      // scraper mark. A serrated comb leaves about 1.5mm of relief, so the
+      // amplitude is roughly halved (see FINISH_AMPLITUDE) and the ridges are
+      // pitched a little finer to match a real comb's teeth.
+      d += Math.sin(y * 88) * amp * 1.05 * sideness;
     }
     if (opts.finish === "smooth" || opts.finish === "ombre") {
-      const sideness = 1 - Math.abs(nor.getY(i));
       d += Math.sin(y * 16 + ox) * amp * 0.4 * sideness;
     }
     if (opts.finish === "rustic") {
-      // Palette-knife swirl: a second, lower-frequency band.
+      // Palette-knife work is a sequence of overlapping *sweeps* — each one
+      // starts, curves and lifts off. The old band was sin(θ·9 + y·14), which at
+      // nine cycles around the cake and a shallow y term is a set of near-vertical
+      // folds running top to bottom: a draped cloth, or a candle that has melted,
+      // which is exactly how the palest cake in the lab read. Pitching the two
+      // terms the other way round — few cycles vertically, many around — turns the
+      // same one-line displacement into diagonal strokes that wrap the cake.
       const theta = Math.atan2(z, x);
-      d += Math.sin(theta * 9 + y * 14) * amp * 0.55;
+      d += Math.sin(theta * 3.5 + y * 22) * amp * 0.42;
+      d += Math.sin(theta * 6.5 - y * 9 + oy) * amp * 0.3;
     }
 
-    pos.setX(i, x + nor.getX(i) * d);
-    pos.setY(i, y + nor.getY(i) * d);
-    pos.setZ(i, z + nor.getZ(i) * d);
+    /*
+     * A cut face is what a knife left, so it is flat.
+     *
+     * Displacing it along its own normal would lift it out of the cut plane — 0.5mm
+     * on a smooth finish, which reads as a knife smear and is welcome, but 2.5mm on
+     * rustic, which is enough to poke through the sponge's cut face on one side or
+     * recede behind it on the other. Damped, not zeroed: the rim keeps most of its
+     * movement so it stays welded to the wall's cut edge.
+     */
+    d *= 1 - cutFace * 0.85;
+
+    let nx = x + nor.getX(i) * d;
+    const ny = y + nor.getY(i) * d;
+    let nz = z + nor.getZ(i) * d;
+
+    /*
+     * Radial-only shaping, on top of the along-normal displacement above.
+     *
+     * Three separate reasons the old shell read as a machined part:
+     *
+     *  - its plan view was a mathematically exact circle at every height. The fbm
+     *    displacement runs at frequency 8.5–13, which is fine enough to texture the
+     *    surface and far too fine to move the *outline*, so the silhouette — the
+     *    thing the eye actually judges a shape by — stayed perfect. `wobble` is one
+     *    slow turn of noise, half a percent of the radius, which is invisible as
+     *    texture and unmistakable as a hand-made outline;
+     *  - frosting does not stop dead at the board. It gathers in a fillet at the
+     *    bottom, because that is where the scraper runs out and where gravity puts
+     *    it. Without one, the join is a knife-edge;
+     *  - and it gathers again at the top of the wall, standing slightly proud of it.
+     *    That crown is the signature of a hand-scraped cake — it is the ridge you
+     *    knock off with a hot knife to get a "sharp edge" finish.
+     *
+     * All three are applied radially rather than along the normal, and scaled by
+     * `sideness`, so the flat top is left alone: pushing the lid outward would tear
+     * it away from the wall it shares vertices with.
+     */
+    const rad = Math.hypot(nx, nz);
+    if (rad > 1e-4 && sideness > 0.05) {
+      const fillet = Math.exp(-y / (H * 0.07)) * t * 0.55;
+      const crown = Math.exp(-Math.pow((y - wallTop * 0.985) / (H * 0.045), 2)) * t * 0.4;
+      const wobble = (fbm3(nx * 0.9 + ow, y * 0.6, nz * 0.9 + ow, 2) - 0.5) * 2
+        * opts.radius * 0.006;
+      /*
+       * `1 - cutFace` is what keeps the band a band.
+       *
+       * A cut cap reads as sideness 1, so without this it collects the full fillet,
+       * crown and wobble — and being flat in a plane through the axis, a radial push
+       * slides its inner edge straight outwards. The fillet alone is 55% of t near
+       * the base, so the frosting band would close to under half its width at the
+       * board and taper open going up: exactly the zero-thickness-paint look the
+       * band exists to fix, reintroduced by the line meant to make the wall
+       * hand-made.
+       *
+       * The rim still moves, because it is welded to the wall's cut edge and has to.
+       */
+      const dr = (fillet + crown + wobble) * sideness * (1 - cutFace);
+      nx += (nx / rad) * dr;
+      nz += (nz / rad) * dr;
+    }
+
+    pos.setXYZ(i, nx, ny, nz);
   }
 
   pos.needsUpdate = true;
@@ -690,9 +1171,32 @@ export interface DripSpec {
   angle: number;
   length: number;
   width: number;
+  /** Where along the run the drip is fattest, 0–1. */
+  belly: number;
+  /** Radius at that point, relative to `width`. A pendant drop is > 1. */
+  bulge: number;
+  /** Radius where it leaves the pool, relative to `width`. */
+  neck: number;
+  /** Sideways drift by the tip, in world units. Nothing runs perfectly plumb. */
+  drift: number;
+  /** How much of the run is spent tapering out. Low is a blunt blob, high a tail. */
+  taper: number;
 }
 
-export function dripSpecs(seed: number, radius: number, count?: number): DripSpec[] {
+/**
+ * All the variation in one place, drawn from one stream.
+ *
+ * Everything below the first three fields is new, and none of it required a new
+ * entry in lib/seed's SEEDED array — they are further draws on the same
+ * `seed ^ 0x5bf03635` stream that the angles and lengths already came from. That
+ * matters: registering a new field there would rehash every cake in existence and
+ * silently reshuffle every saved design.
+ */
+export function dripSpecs(
+  seed: number,
+  radius: number,
+  count?: number,
+): DripSpec[] {
   const rng = mulberry32(seed ^ 0x5bf03635);
   // Twelve drips 2mm across, spaced two inches apart, read as candle wax
   // running down a wall. A poured ganache drip is 5-10mm wide and they land
@@ -700,35 +1204,69 @@ export function dripSpecs(seed: number, radius: number, count?: number): DripSpe
   const n = count ?? Math.round(THREE.MathUtils.clamp(radius * 22, 14, 34));
   const out: DripSpec[] = [];
   for (let i = 0; i < n; i++) {
-    const jitter = (rng() - 0.5) * (Math.PI / n) * 1.1;
+    const jitter = (rng() - 0.5) * (Math.PI / n) * 1.6;
+    // Two thirds of a real pour barely leaves the rim; the long ones are the
+    // exception, and it is the *contrast* that reads as gravity. A uniform
+    // 0.14–0.48 spread gave every drip a middling length and no contrast at all.
+    const long = rng() < 0.34;
     out.push({
       angle: (i / n) * Math.PI * 2 + jitter,
-      // Long ones next to short ones is most of what makes a pour look poured.
-      length: 0.14 + rng() * 0.34,
-      width: 0.10 + rng() * 0.06,
+      length: long ? 0.26 + rng() * 0.34 : 0.08 + rng() * 0.14,
+      // An absolute radius now, not a scale factor on a lathe of radius 0.5. A
+      // poured drip is 5-10mm across and one world unit is 91mm, so this is
+      // 5.8mm to 10.5mm of real chocolate before the bulge widens it.
+      width: 0.032 + rng() * 0.026,
+      belly: 0.42 + rng() * 0.34,
+      // Chocolate hanging off an edge is pulled into a teardrop by its own weight,
+      // so the widest part is below the middle and wider than the neck.
+      bulge: 1 + rng() * 0.34,
+      neck: 0.72 + rng() * 0.22,
+      drift: (rng() - 0.5) * 0.05,
+      taper: 0.16 + rng() * 0.26,
     });
   }
   return out;
 }
 
-/** The radius the frosting actually pools at, which is not the tier radius on a
- * domed bundt. */
-export function rimRadius(shape: Shape, radius: number): number {
-  return shape === "bundt" ? radius * 0.88 : radius;
-}
-
-/** The pooled ring of frosting at the top edge, following the real silhouette. */
+/**
+ * The pooled ring of frosting at the top edge, following the real silhouette.
+ *
+ * `seed` makes the pool uneven. A tube of constant radius swept along a perfect
+ * ring is a torus, and a torus reads as a plastic hoop pressed onto the cake —
+ * which is precisely how a poured coat used to look. Real poured frosting gathers
+ * thickly in some places and thinly in others, so the *path* rises, falls, and
+ * breathes in and out. Displacing the path rather than the tube's radius keeps
+ * this a single cheap TubeGeometry.
+ */
 export function rimGeometry(
   shape: Shape,
   radius: number,
   tube = 0.028,
   outline?: OutlinePoint[],
+  seed = 0,
 ): THREE.BufferGeometry {
   const ring = outline?.length
     ? outline.map(p => ({ ...p, x: p.x + p.nx * tube * 0.5, z: p.z + p.nz * tube * 0.5 }))
-    : outlinePoints(shape, rimRadius(shape, radius) + tube * 0.9, 96);
+    : outlinePoints(shape, radius + tube * 0.9, 96);
 
-  const pts = ring.map(p => new THREE.Vector3(p.x, 0, p.z));
+  // Sampled down to at most 96 control points: a CatmullRom through 200 points
+  // only 3mm apart turns any per-point displacement into a visible zigzag.
+  const count = Math.min(96, ring.length);
+  const step = ring.length / count;
+
+  const pts: THREE.Vector3[] = [];
+  for (let i = 0; i < count; i++) {
+    const p = ring[Math.floor(i * step)];
+    const a = (i / count) * Math.PI * 2;
+    // Two incommensurable frequencies, so the pool never repeats around the cake.
+    const n = Math.sin(a * 3 + seed * 0.7) * 0.6 + Math.sin(a * 7.3 + seed * 1.9) * 0.4;
+    pts.push(new THREE.Vector3(
+      p.x + p.nx * n * tube * 0.3,
+      n * tube * 0.42,
+      p.z + p.nz * n * tube * 0.3,
+    ));
+  }
+
   const curve = new THREE.CatmullRomCurve3(pts, true);
   const g = new THREE.TubeGeometry(curve, 128, tube, 10, true);
   g.computeVertexNormals();
@@ -736,68 +1274,403 @@ export function rimGeometry(
 }
 
 /**
- * One drip: fat at the rim, a long parallel run, rounded at the tip.
+ * Every drip on one tier, as a single geometry.
  *
- * The profile has to touch the axis at both ends. It used to start at radius
- * 0.18 and finish at 0.04, so the lathe produced an open-ended cone with no
- * caps — and since the frosting renders FrontSide, you looked straight through
- * every drip and saw the cake behind it. They read as little hollow V-shaped
- * notches cut out of the rim rather than as chocolate hanging off it.
+ * What was here before was one lathe, built once, and then instanced per drip with
+ * `scale=[width, length, width]`. Every drip on the cake was therefore the *same
+ * drip*, stretched — the same taper, the same tip, the same perfectly circular
+ * cross-section, all hanging perfectly plumb. Fourteen to thirty-four copies of one
+ * shape in a ring is a procedural pattern no amount of material work can rescue,
+ * and it is the "repeated tubes" reading exactly.
+ *
+ * So each drip is built from its own spec instead: its own neck, belly, taper, tip
+ * and sideways drift. That is more geometry to generate, so they are merged into one
+ * buffer and drawn in a single call — which is actually *fewer* draw calls than the
+ * fourteen-to-thirty-four separate meshes this replaces.
+ *
+ * Each run also starts above the rim, inside the pooled ring, so a drip emerges from
+ * the frosting rather than being stuck onto the outside of it — and it is closed at
+ * both ends, because the frosting renders FrontSide and an open tube is a hole you
+ * can see the cake through. (That was the bug the previous profile's comment
+ * described; it stays fixed here.)
  */
-export function dripGeometry(): THREE.BufferGeometry {
-  // (t along the run, radius). Closed at t=0 and t=1.
-  const keys: [number, number][] = [
-    [0, 0], [0.05, 0.42], [0.14, 0.50], [0.45, 0.47],
-    [0.72, 0.42], [0.88, 0.34], [0.96, 0.21], [1, 0],
-  ];
+export function dripsGeometry(
+  specs: DripSpec[],
+  anchors: OutlinePoint[],
+  opts: { rings?: number; segments?: number } = {},
+): THREE.BufferGeometry | null {
+  const rings = opts.rings ?? 9;
+  const segments = opts.segments ?? 10;
+  const parts: THREE.BufferGeometry[] = [];
 
-  const pts: THREE.Vector2[] = [];
-  const steps = 26;
-  for (let i = 0; i <= steps; i++) {
-    const t = i / steps;
-    let k = 0;
-    while (k < keys.length - 2 && keys[k + 1][0] < t) k++;
-    const [t0, r0] = keys[k];
-    const [t1, r1] = keys[k + 1];
-    const u = t1 === t0 ? 0 : (t - t0) / (t1 - t0);
-    pts.push(new THREE.Vector2(r0 + (r1 - r0) * u, -t));
+  for (const s of specs) {
+    const a = anchors[
+      Math.floor((s.angle / (Math.PI * 2)) * anchors.length + anchors.length) % anchors.length
+    ];
+    if (!a) continue;
+
+    // Along the wall, at right angles to the outward normal: the direction a drip
+    // wanders as it runs.
+    const tx = -a.nz, tz = a.nx;
+
+    const pos: number[] = [];
+    const idx: number[] = [];
+    const uv: number[] = [];
+
+    /*
+     * The run starts at -0.12 — above the rim, buried in the pooled ring — and the
+     * radius there is zero, so the geometry closes inside the frosting and the drip
+     * appears to be *fed* by the pool.
+     */
+    const t0 = -0.12;
+    for (let r = 0; r <= rings; r++) {
+      const u = r / rings;
+      const t = t0 + (1 - t0) * u;
+
+      // Radius along the run: closed inside the pool, out to the neck, swelling to
+      // the belly, holding, then rounding off at the tip.
+      let radius: number;
+      if (t <= 0) {
+        // A quarter-ellipse, so the buried end closes smoothly instead of ending
+        // in a disc that could poke out of the pool as a visible rim.
+        radius = s.width * s.neck * Math.sqrt(Math.max(0, 1 - (t / t0) ** 2));
+      } else if (t < s.belly) {
+        const k = smootherstep(t / s.belly);
+        radius = s.width * (s.neck + (s.bulge - s.neck) * k);
+      } else {
+        const k = (t - s.belly) / (1 - s.belly);
+        const hold = 1 - s.taper;
+        radius = k < hold
+          // Thinning gently along the run.
+          ? s.width * s.bulge * (1 - 0.18 * (k / hold))
+          // Hemispherical tip: a hanging drop ends in a bead, not a needle.
+          : s.width * s.bulge * 0.82
+            * Math.sqrt(Math.max(0, 1 - ((k - hold) / (1 - hold)) ** 2));
+      }
+      radius = Math.max(1e-4, radius);
+
+      /*
+       * Centre-line: down, drifting sideways, and standing proud of the wall.
+       *
+       * The outward offset is what makes a drip read as chocolate hanging off an
+       * edge rather than a dark line painted on the side. It has to be along the
+       * anchor's own normal, not a fixed vector: a fixed offset only ever worked on
+       * a round cake, where the wall curves away from the drip anyway, and on a
+       * square it left nine tenths of every drip buried in the frosting.
+       *
+       * The slight inward pull with depth is surface tension — a run of ganache
+       * hugs the wall it is descending.
+       */
+      const run = Math.max(0, t);
+      const out0 = s.width * 0.34 - 0.006 * run;
+      const cx = a.x + a.nx * out0 + tx * s.drift * run * run;
+      const cz = a.z + a.nz * out0 + tz * s.drift * run * run;
+      const cy = -t * s.length;
+
+      for (let c = 0; c < segments; c++) {
+        const phi = (c / segments) * Math.PI * 2;
+        // The cross-section is an ellipse flattened against the wall: a drip is
+        // spread by the surface it clings to, never a perfect cylinder.
+        const along = Math.cos(phi) * radius;
+        const out = Math.sin(phi) * radius * 0.72;
+        pos.push(cx + tx * along + a.nx * out, cy, cz + tz * along + a.nz * out);
+        uv.push(c / segments, u);
+      }
+    }
+
+    for (let r = 0; r < rings; r++) {
+      for (let c = 0; c < segments; c++) {
+        const c2 = (c + 1) % segments;
+        const i0 = r * segments + c, i1 = r * segments + c2;
+        const i2 = (r + 1) * segments + c, i3 = (r + 1) * segments + c2;
+        idx.push(i0, i2, i1, i1, i2, i3);
+      }
+    }
+
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
+    g.setIndex(idx);
+    g.computeVertexNormals();
+    // Per drip, before merging: welding the merged set would fuse drips that happen
+    // to touch and average their normals across the gap.
+    weldNormals(g);
+    parts.push(g);
   }
-  return latheWithUV(pts, 18);
+
+  if (!parts.length) return null;
+  const merged = mergeGeometries(parts, false);
+  parts.forEach(p => p.dispose());
+  return merged;
 }
 
 /* ------------------------------------------------------------------ *
  * Ruffle and rosette decoration
  * ------------------------------------------------------------------ */
 
-export function ruffleGeometry(): THREE.BufferGeometry {
-  // A shallow curved frill; instanced around the circumference.
-  const s = new THREE.Shape();
-  s.moveTo(-0.5, 0);
-  s.bezierCurveTo(-0.36, 0.42, 0.36, 0.42, 0.5, 0);
-  s.bezierCurveTo(0.34, 0.14, -0.34, 0.14, -0.5, 0);
-  const g = new THREE.ExtrudeGeometry(s, {
-    depth: 0.02, bevelEnabled: true, bevelSize: 0.012,
-    bevelThickness: 0.012, bevelSegments: 2, curveSegments: 10,
-  });
-  g.center();
-  g.computeVertexNormals();
-  return g;
+/**
+ * The ruffled finish, as one continuous band per row.
+ *
+ * Three rewrites of this as an *instanced petal* all came out worse than the flat lens
+ * they replaced — fish scales, then torn paper, then a spiky thistle — and the reason
+ * is that the primitive was wrong, not the parameters. A ruffle is a single gathered
+ * ribbon piped in one unbroken pass around the cake. Anything built from discrete
+ * instances has a boundary at every instance, and those boundaries are visible: push
+ * the waviness up to disguise them and they read as tears, push the thickness taper up
+ * and they read as spikes. There is no setting at which a row of separate objects
+ * becomes one continuous frill.
+ *
+ * So it is swept instead: the tier's own measured outline, walked once per row, with a
+ * hem that undulates as it goes. There are no instance boundaries because there are no
+ * instances, and the undulation closes on itself around the cake, so there is no seam
+ * either.
+ *
+ * It is also far cheaper. The instanced version put 200-odd frills of ~200 triangles on
+ * every tier, about 80–100k triangles a cake; this is nearer 20k, in one draw call.
+ */
+export function ruffleBandGeometry(
+  shape: Shape,
+  radius: number,
+  height: number,
+  seed: number,
+  sector?: Sector,
+): THREE.BufferGeometry | null {
+  const size = Math.min(0.3, radius * 0.32);
+  const rows = Math.max(3, Math.round(height / (size * 0.55)));
+
+  /*
+   * Wavelength first, then sampling.
+   *
+   * At one undulation every 0.72 of a frill's depth the tier got about thirty-seven of
+   * them, which put ±0.06 of hem swing into a 0.22-unit wavelength — a 28% amplitude
+   * ratio, and that is a chevron rather than a scallop. It rendered as pinked card. A
+   * scallop wants to be long and shallow, so the wavelength roughly doubles; and ten
+   * samples across each one, because six left the hem a visible polyline of straight
+   * segments meeting at points.
+   */
+  const perimeter = outlinePerimeter(outlinePoints(shape, radius, 64));
+  const waves = Math.max(9, Math.round(perimeter / (size * 1.5)));
+  const segments = waves * 10;
+  const V = 4;
+
+  const ring = shellOutline(shape, radius, height, segments, "widest");
+  if (!ring.length) return null;
+
+  const rng = mulberry32(seed ^ 0x1f83d9ab);
+  const parts: THREE.BufferGeometry[] = [];
+
+  for (let r = 0; r < rows; r++) {
+    const rowY = ((r + 0.5) / rows) * height;
+    // Each row is piped separately, so each gets its own phase and its own slightly
+    // different hem. Rows that share a phase line up into vertical columns.
+    const phaseA = rng() * Math.PI * 2;
+    const phaseB = rng() * Math.PI * 2;
+    const depth = size * (0.92 + rng() * 0.16);
+
+    const pos: number[] = [];
+    const uv: number[] = [];
+    const idx: number[] = [];
+    const cols = segments + 1;
+
+    // A whole number of cycles, so the ripple closes on itself and leaves no seam
+    // where the band meets its own start. Rows differ by a cycle so they do not nest.
+    const rowWaves = waves + (r % 2 === 0 ? 0 : 1);
+    const wave = (i: number) => {
+      const a = (i / segments) * Math.PI * 2;
+      return Math.sin(a * rowWaves + phaseA) * 0.7
+        + Math.sin(a * Math.max(2, Math.round(rowWaves / 2)) + phaseB) * 0.3;
+    };
+
+    /** Half-thickness: fat where the bag holds it to the cake, thin at the hem. */
+    const half = (v: number) => depth * (0.09 * Math.pow(1 - v, 1.2) + 0.016);
+
+    for (const sign of [1, -1]) {
+      for (let j = 0; j <= V; j++) {
+        const v = j / V;
+        for (let i = 0; i < cols; i++) {
+          const p = ring[i % segments];
+          const w = wave(i);
+          // The hem hangs, lengthening and shortening with the wave — that variation
+          // is what makes it a ruffle rather than a skirt.
+          const y = rowY + depth * 0.34 - v * depth * (0.86 + w * 0.14);
+          // And it lifts away from the wall as it falls, waving in and out.
+          const out = v * v * depth * 0.26 + w * depth * 0.1 * v + sign * half(v);
+          pos.push(p.x + p.nx * out, y, p.z + p.nz * out);
+          uv.push(i / segments, 1 - v);
+        }
+      }
+    }
+
+    const ringSize = cols * (V + 1);
+    const kept = (i: number) => !sector || !inSector(ring[i % segments], sector);
+
+    for (let j = 0; j < V; j++) {
+      for (let i = 0; i < segments; i++) {
+        // A cut cake simply stops: the band is not piped over open sponge.
+        if (!kept(i) || !kept(i + 1)) continue;
+        const f = j * cols + i;
+        idx.push(f, f + cols, f + cols + 1, f, f + cols + 1, f + 1);
+        const b = ringSize + f;
+        idx.push(b, b + 1, b + cols + 1, b, b + cols + 1, b + cols);
+      }
+    }
+    // The hem itself, so the band is solid and not two sheets with a gap.
+    for (let i = 0; i < segments; i++) {
+      if (!kept(i) || !kept(i + 1)) continue;
+      const f = V * cols + i;
+      idx.push(f, f + 1, ringSize + f + 1, f, ringSize + f + 1, ringSize + f);
+    }
+
+    if (!idx.length) continue;
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
+    g.setIndex(idx);
+    g.computeVertexNormals();
+    parts.push(g);
+  }
+
+  if (!parts.length) return null;
+  const merged = mergeGeometries(parts, false);
+  parts.forEach(x => x.dispose());
+  return merged;
 }
 
+/** Whether an outline point falls in the removed wedge. */
+function inSector(p: OutlinePoint, sector: Sector): boolean {
+  let d = phiOf(p.x, p.z) - sector.centre;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  return Math.abs(d) < sector.width / 2;
+}
+
+/**
+ * A piped rosette: a spiral sweep, wound from the outside in so the centre sits
+ * proud the way a real rose does.
+ *
+ * The spiral was right and two things about the sweep were wrong.
+ *
+ * The first is arithmetic. The spiral stepped inward by (0.46 − 0.03) / 1.85 turns =
+ * 0.232 per turn, and it was swept with a tube of radius 0.155 — a *diameter* of
+ * 0.31. Consecutive coils therefore overlapped by a third and fused into one solid
+ * mound with a groove cut into it, which is a snail shell. For coils to read as coils
+ * the sweep's diameter has to be about the radial pitch, so the pitch goes up (more
+ * turns over a slightly smaller spiral) and the section comes down to meet it.
+ *
+ * The second is the section itself. A rosette is piped through an open *star* tip,
+ * and the ridges that tip leaves are the whole signature of piped buttercream — a
+ * circular section is a rope of clay however well it is lit. `TubeGeometry` only
+ * sweeps circles, so this sweeps its own five-pointed section instead, which also
+ * allows the outer end to taper off the way it does when the bag lifts away.
+ */
 export function rosetteGeometry(): THREE.BufferGeometry {
-  // A spiral sweep — the piped swirl, not a sphere pretending to be one. Wound
-  // from the outside in, so the centre sits proud the way a real rose does.
-  const turns = 1.85;
-  const pts: THREE.Vector3[] = [];
-  const steps = 72;
-  for (let i = 0; i <= steps; i++) {
-    const t = i / steps;
+  const turns = 2.25;
+  const stations = 34;
+  /*
+   * Fifteen, not a round dozen, because the five ridges have to land *on* vertices to
+   * read as ridges: 360/15 = 24°, the ridge period is 72°, so every crest is a vertex
+   * and each lobe gets three of them. At twelve the crests fall between vertices and
+   * the section aliases into a twisting prism.
+   */
+  const section = 15;
+  /** Radial pitch per turn; the section's width is matched to it below. */
+  const rOuter = 0.44, rInner = 0.05;
+  const pitch = (rOuter - rInner) / turns;
+
+  const pos: number[] = [];
+  const uv: number[] = [];
+  const idx: number[] = [];
+
+  const P = new THREE.Vector3();
+  const T = new THREE.Vector3();
+  const N = new THREE.Vector3();
+  const B = new THREE.Vector3();
+  const UP = new THREE.Vector3(0, 1, 0);
+
+  for (let i = 0; i <= stations; i++) {
+    const t = i / stations;
     const a = t * Math.PI * 2 * turns;
-    const r = 0.46 * (1 - t) + 0.03;
-    pts.push(new THREE.Vector3(Math.cos(a) * r, t * t * 0.2, Math.sin(a) * r));
+    const r = rOuter * (1 - t) + rInner;
+
+    // The spiral rises towards its centre, so the middle of the rose stands above
+    // the coils around it.
+    // Domed rather than flat. At 0.22 the rose was a third as deep as it was wide and
+    // read as a spiral carved in relief; a piped rose is a mound with its heart
+    // standing well clear of the outer coil.
+    P.set(Math.cos(a) * r, t * t * 0.34, Math.sin(a) * r);
+
+    // Analytic tangent: d/dt of the above. The spiral is never vertical, so the
+    // frame can be built against world up without a degenerate case.
+    const da = Math.PI * 2 * turns;
+    const dr = -rOuter;
+    T.set(
+      Math.cos(a) * dr - Math.sin(a) * r * da,
+      2 * t * 0.34,
+      Math.sin(a) * dr + Math.cos(a) * r * da,
+    ).normalize();
+    B.crossVectors(T, UP).normalize();
+    N.crossVectors(B, T).normalize();
+
+    /*
+     * Half the pitch, so neighbouring coils meet without merging — then tapered over
+     * the outer eighth, which is the tail, and swelled a little at the very centre so
+     * the heart of the rose reads as a button rather than as the end of a rope.
+     */
+    // A thinner tail than 0.45 of the section reads as a spike rather than as the
+    // end of a piped stroke — invisible on a wall where neighbours hide it, obvious
+    // on a top face seen from directly above.
+    const tail = 0.45 + 0.55 * THREE.MathUtils.smoothstep(t, 0, 0.12);
+    const heart = 1 + 0.18 * THREE.MathUtils.smoothstep(t, 0.82, 1);
+    const rad = pitch * 0.5 * tail * heart;
+
+    for (let j = 0; j < section; j++) {
+      const phi = (j / section) * Math.PI * 2;
+      // Five ridges, as an open star tip leaves.
+      const k = rad * (1 + 0.24 * Math.cos(5 * phi));
+      pos.push(
+        P.x + N.x * Math.cos(phi) * k + B.x * Math.sin(phi) * k,
+        P.y + N.y * Math.cos(phi) * k + B.y * Math.sin(phi) * k,
+        P.z + N.z * Math.cos(phi) * k + B.z * Math.sin(phi) * k,
+      );
+      uv.push(t, j / section);
+    }
   }
-  const curve = new THREE.CatmullRomCurve3(pts);
-  const g = new THREE.TubeGeometry(curve, 60, 0.155, 9, false);
+
+  for (let i = 0; i < stations; i++) {
+    for (let j = 0; j < section; j++) {
+      const j2 = (j + 1) % section;
+      const a0 = i * section + j, a1 = i * section + j2;
+      const b0 = (i + 1) * section + j, b1 = (i + 1) * section + j2;
+      idx.push(a0, b0, a1, a1, b0, b1);
+    }
+  }
+
+  // Cap both ends: the tail, and the centre of the rose. Open tubes render as holes
+  // in a FrontSide material.
+  const capCentre = (station: number, flip: boolean) => {
+    const base = station * section;
+    const c = pos.length / 3;
+    let cx = 0, cy = 0, cz = 0;
+    for (let j = 0; j < section; j++) {
+      cx += pos[(base + j) * 3];
+      cy += pos[(base + j) * 3 + 1];
+      cz += pos[(base + j) * 3 + 2];
+    }
+    pos.push(cx / section, cy / section, cz / section);
+    uv.push(0.5, 0.5);
+    for (let j = 0; j < section; j++) {
+      const j2 = (j + 1) % section;
+      if (flip) idx.push(c, base + j2, base + j);
+      else idx.push(c, base + j, base + j2);
+    }
+  };
+  capCentre(0, false);
+  capCentre(stations, true);
+
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
+  g.setIndex(idx);
   // Built in XZ rising along +Y, so its face is +Y. Turn it to face +Z instead:
   // every other piece of decoration here is aimed by a yaw about Y, and a
   // +Z-facing rosette can be aimed the same way instead of by a three-term
@@ -811,12 +1684,163 @@ export function rosetteGeometry(): THREE.BufferGeometry {
  * Board and plaque
  * ------------------------------------------------------------------ */
 
+/** The board's own thickness, and how far CakeBoard drops it below the cake. */
+export const BOARD_H = 0.055;
+export const BOARD_DROP = 0.05;
+/** The board's lid in world y. Anything that sits *on* the board sits on this. */
+export const BOARD_TOP = BOARD_H - BOARD_DROP;
+
 export function boardGeometry(radius: number): THREE.BufferGeometry {
-  const h = 0.05;
-  const r = radius * 1.28;
-  // No wall or lid subdivision: a board carries no finish, so the extra rings
-  // would be vertices spent on nothing.
-  return latheWithUV(lathePoints(r, h, 0.016, 1, 1), 64);
+  const h = BOARD_H;
+  const r = radius * 1.3;
+
+  /*
+   * This used to be `lathePoints(r, h, 0.016, 1, 1)`, on the stated grounds that
+   * "a board carries no finish, so the extra rings would be vertices spent on
+   * nothing". That was true while the board was lit and nothing more. It is not
+   * true now: the lid carries the cake's baked contact shadow (CakeBoard →
+   * bakeOcclusion), and a two-point lid can hold a two-step gradient. So the lid
+   * gets rings — and only the lid, because the wall still carries nothing.
+   *
+   * The edge is its own detail now rather than one bevel arc. A cake board is card
+   * wrapped in foil: a crisp top arris, a straight rolled edge, and a slight
+   * undercut where the foil folds beneath. Four profile points instead of one arc,
+   * and the board stops being a cylinder with a rounded corner.
+   */
+  const b = 0.011;
+  const pts: THREE.Vector2[] = [
+    new THREE.Vector2(0, 0),
+    new THREE.Vector2(r - b * 1.6, 0),
+    // The fold of the foil. It catches a sliver of shadow, and that sliver is
+    // what separates the board's edge from the surface underneath it.
+    new THREE.Vector2(r - b * 0.3, h * 0.22),
+    new THREE.Vector2(r, h * 0.52),
+    new THREE.Vector2(r - b * 0.35, h - b),
+    new THREE.Vector2(r - b * 1.5, h),
+  ];
+
+  const lidRings = 16;
+  const xLid = r - b * 1.5;
+  for (let i = 1; i <= lidRings; i++) {
+    pts.push(new THREE.Vector2(xLid * (1 - i / lidRings), h));
+  }
+
+  return latheWithUV(pts, 64);
+}
+
+/* ------------------------------------------------------------------ *
+ * Loose crumbs
+ * ------------------------------------------------------------------ */
+
+/**
+ * One crumb, knocked out of round.
+ *
+ * A 20-face icosahedron is already close to what a crumb of sponge is — a small
+ * angular lump — and at 1-3mm it covers two or three pixels, so anything more is
+ * triangles nobody sees. The displacement is a function of the vertex's own
+ * direction rather than of an index, because PolyhedronGeometry is non-indexed and
+ * duplicates its vertices per face: drive it from a counter and every face pulls
+ * away from its neighbours and the crumb comes apart.
+ *
+ * Normalised to a maximum radius of exactly 1, *after* the displacement rather than
+ * before it. Instances carry the real size, so all of them share this one upload —
+ * and normalising means an instance's scale is the crumb's actual half-extent in
+ * millimetres, instead of that times whatever the noise happened to do. Without it
+ * a "1.5mm" crumb is really 1.9mm and §5.3's size band is not a thing the test can
+ * check.
+ */
+export function crumbGeometry(): THREE.BufferGeometry {
+  const g = new THREE.IcosahedronGeometry(1, 0);
+  const pos = g.attributes.position as THREE.BufferAttribute;
+
+  let max = 0;
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+    const k = 0.74 + fbm3(x * 2.1 + 4.7, y * 2.1 + 1.3, z * 2.1 + 8.9, 2) * 0.52;
+    pos.setXYZ(i, x * k, y * k, z * k);
+    max = Math.max(max, Math.hypot(x * k, y * k, z * k));
+  }
+  for (let i = 0; i < pos.count; i++) {
+    pos.setXYZ(i, pos.getX(i) / max, pos.getY(i) / max, pos.getZ(i) / max);
+  }
+
+  pos.needsUpdate = true;
+  g.computeVertexNormals();
+  return g;
+}
+
+export interface Crumb {
+  position: THREE.Vector3;
+  rotation: THREE.Euler;
+  /** Non-uniform: a crumb that fell off a cut face is not a ball. */
+  scale: THREE.Vector3;
+}
+
+/**
+ * Crumbs on the board beneath a cut — §5.3, requirement 5: "6 to 12 tiny instanced
+ * meshes with sponge material, scattered with a seed. They cost nothing and they
+ * are the single detail that makes people believe it."
+ *
+ * Seeded from the config, like every other scatter in this project, because
+ * `e2e/visual.spec.ts` compares committed PNGs and a crumb that moves between two
+ * renders of the same design fails every one of them.
+ *
+ * Two populations, which is what actually happens when a slice is lifted out: some
+ * fall into the notch it came from, and the rest end up on the board just in front
+ * of the cut, spread a little wider than the wedge itself. Nothing is scattered
+ * anywhere else — a crumb behind an uncut cake has no story.
+ *
+ * They do **not** scale with the cake. A crumb is a crumb, the same argument
+ * `scaleForSize` makes about a strawberry.
+ */
+export function scatterCrumbs(seed: number, radius: number, sector: Sector): Crumb[] {
+  const rng = mulberry32(seed ^ 0x5eed6a11);
+  const half = sector.width / 2;
+  const count = 6 + Math.floor(rng() * 7);   // 6-12 inclusive
+
+  const out: Crumb[] = [];
+  for (let i = 0; i < count; i++) {
+    const inNotch = rng() < 0.45;
+
+    /*
+     * In the notch, kept off the two cut faces by a fifth of the wedge at each
+     * side — a crumb welded into the sponge wall reads as a lump, not a crumb.
+     * Outside, wider than the wedge, because they bounce.
+     */
+    const phi = sector.centre + (rng() * 2 - 1) * (inNotch ? half * 0.6 : half + 0.42);
+    const r = radius * (inNotch ? 0.28 + rng() * 0.6 : 1.06 + rng() * 0.16);
+
+    /*
+     * 1-3mm across, flattened, because a crumb settles on a face rather than
+     * balancing on a corner. `s` is a half-extent, so 0.5-1.5mm is a diameter of
+     * 1-3mm — exactly, since crumbGeometry normalises to radius 1.
+     *
+     * One horizontal axis is `s` exactly and the other is shortened, so the
+     * footprint is an ellipse and `s` is genuinely the crumb's longest dimension.
+     * Jittering *both* axes downward, which is what this did first, quietly moved
+     * the floor: the shortest crumb came out 0.78mm rather than 1mm, because
+     * nothing guaranteed either axis ever reached `s`. The test caught it.
+     *
+     * Nothing is lost by fixing the major axis. The rotation below is random about
+     * all three, so no two crumbs point their long side the same way.
+     */
+    const s = (0.5 + rng()) * MM;
+    const sy = s * (0.5 + rng() * 0.34);
+
+    out.push({
+      position: new THREE.Vector3(
+        Math.sin(phi) * r,
+        // Bedded a hair into the board rather than balanced on it: at this size a
+        // crumb resting exactly tangent reads as hovering.
+        BOARD_TOP + sy * 0.82,
+        Math.cos(phi) * r,
+      ),
+      rotation: new THREE.Euler(rng() * Math.PI, rng() * Math.PI * 2, rng() * Math.PI),
+      scale: new THREE.Vector3(s, sy, s * (0.62 + rng() * 0.38)),
+    });
+  }
+
+  return out;
 }
 
 export function plaqueGeometry(width: number, height: number): THREE.BufferGeometry {
@@ -869,7 +1893,7 @@ export interface OutlinePoint {
 export function outlinePoints(shape: Shape, radius: number, count: number): OutlinePoint[] {
   const n = Math.max(6, Math.round(count));
 
-  if (shape === "round" || shape === "bundt") {
+  if (shape === "round") {
     return Array.from({ length: n }, (_, i) => {
       const a = (i / n) * Math.PI * 2;
       return { x: Math.cos(a) * radius, z: Math.sin(a) * radius, nx: Math.cos(a), nz: Math.sin(a), yaw: -a };
@@ -919,6 +1943,60 @@ export function offsetOutline(pts: OutlinePoint[], d: number): OutlinePoint[] {
   return pts.map(p => ({ ...p, x: p.x + p.nx * d, z: p.z + p.nz * d }));
 }
 
+/** Distance from (x, z) to the segment a—b. */
+function distToSegment(x: number, z: number, a: OutlinePoint, b: OutlinePoint): number {
+  const dx = b.x - a.x;
+  const dz = b.z - a.z;
+  const len = dx * dx + dz * dz;
+  const t = len === 0 ? 0 : Math.max(0, Math.min(1, ((x - a.x) * dx + (z - a.z) * dz) / len));
+  return Math.hypot(x - (a.x + dx * t), z - (a.z + dz * t));
+}
+
+/**
+ * `offsetOutline`, keeping only the points that ended up genuinely `d` clear of
+ * the outline they came from.
+ *
+ * Offsetting a polygon along per-vertex normals is only valid while the distance
+ * stays under the local radius of curvature. Past that the path folds through
+ * itself and leaves a bowtie: outward it happens at a concave feature, inward at a
+ * convex one, and this cake has both — a heart's cleft is concave and its point is
+ * sharp, a square's corner rounds at 16% of its half-width. A bowtie is not a
+ * cosmetic problem for anything that walks the result by arc length, because the
+ * doubled-back leg is length that leads nowhere: two pieces get spaced a full gap
+ * apart along the path and land in the same place on the cake.
+ *
+ * The test is the definition rather than a repair. A point of an offset outline is
+ * the point `d` from the edge and on the correct side of it; if it is not both, it
+ * is not that point, so it goes. What is left is a valid path with corners missing,
+ * and a corner too tight to hold the offset is a corner too tight to hold the thing
+ * being placed there — walking straight across it is the right answer anyway.
+ *
+ * Both halves of the test are load-bearing. Distance alone leaves the fold at a
+ * heart's cleft in place: a point pushed *outward* from one wall of the notch can
+ * land a clean `d` from the outline and still be inside the cake, under the far
+ * wall, where a strawberry on the board would be somewhere under the sponge.
+ *
+ * Scaling the silhouette instead is the other way to stay valid, and is what the
+ * rosettes do, but it only works on a shape whose every point is roughly the same
+ * distance out. A heart's cleft comes closer to the centre than its lobes by half,
+ * so the scale that clears the cleft shrinks the lobes to nothing.
+ */
+export function offsetOutlineClear(pts: OutlinePoint[], d: number): OutlinePoint[] {
+  const near = Math.abs(d) * 0.9;
+  const wantInside = d < 0;
+  const kept = offsetOutline(pts, d).filter((m) => {
+    if (insideOutline(pts, m.x, m.z) !== wantInside) return false;
+    for (let i = 0; i < pts.length; i++) {
+      if (distToSegment(m.x, m.z, pts[i], pts[(i + 1) % pts.length]) < near) return false;
+    }
+    return true;
+  });
+  // Three points is the least that still encloses anything. Below that the offset
+  // has eaten the whole shape, and the un-filtered path is a better answer than
+  // nothing at all.
+  return kept.length >= 3 ? kept : offsetOutline(pts, d);
+}
+
 /** The frosting thickness `shellGeometry` will use, so callers cannot drift. */
 export function shellThickness(radius: number): number {
   return Math.max(0.022, radius * 0.035);
@@ -953,24 +2031,26 @@ export function shellOutline(
   radius: number,
   height: number,
   count: number,
-  band: "rim" | "widest",
+  band: "rim" | "widest" | "top",
 ): OutlinePoint[] {
   const { R, B } = shellMetrics(radius, height);
-
-  if (shape === "bundt") {
-    // A bundt's glaze pools well inside its widest point.
-    return outlinePoints(shape, rimRadius(shape, R) + B, count);
-  }
 
   if (shape === "round") {
     // lathePoints flares the base to R·1.012 and tapers back to R at the top of
     // the wall, which is where the frosting gathers before it runs.
-    return outlinePoints(shape, band === "widest" ? R * 1.012 : R, count);
+    if (band === "widest") return outlinePoints(shape, R * 1.012, count);
+    return outlinePoints(shape, band === "top" ? R - B : R, count);
   }
 
   // ExtrudeGeometry insets the outline by bevelSize and then bevels back out
   // along the normals, so the side wall — the widest band, and the edge a drip
   // runs off — is the inset outline pushed back out by exactly one bevel.
+  //
+  // Which makes the *inset* outline, un-offset, exactly the flat top face: the
+  // bevel is the roll between the two, so anything that has to lie on the top
+  // rather than hang off its edge measures itself against this one. That is what
+  // "top" is for, and toppings are its only caller — see Toppings.place.
+  if (band === "top") return outlinePoints(shape, R - B, count);
   return offsetOutline(outlinePoints(shape, R - B, count), B);
 }
 
@@ -1010,6 +2090,39 @@ export function outlinePerimeter(pts: OutlinePoint[]): number {
 }
 
 /**
+ * Area enclosed by a measured outline. A square's top is 4r², not πr² — 27% more
+ * cake to cover, which is the difference between a scattered topping filling a
+ * square and leaving a bare margin all the way round it.
+ */
+export function outlineArea(pts: OutlinePoint[]): number {
+  let a = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const p = pts[i];
+    const q = pts[(i + 1) % pts.length];
+    a += p.x * q.z - q.x * p.z;
+  }
+  return Math.abs(a) / 2;
+}
+
+/**
+ * Is (x, z) on the cake?
+ *
+ * Ray crossing rather than a radius comparison, because the whole point of
+ * measuring an outline is that some of these shapes are not circles and one of
+ * them — the heart — is not even convex. A radius test cannot exclude the cleft.
+ */
+export function insideOutline(pts: OutlinePoint[], x: number, z: number): boolean {
+  let inside = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const a = pts[i];
+    const b = pts[j];
+    if ((a.z > z) !== (b.z > z)
+      && x < a.x + ((z - a.z) / (b.z - a.z)) * (b.x - a.x)) inside = !inside;
+  }
+  return inside;
+}
+
+/**
  * Radius of the circle that contains the whole footprint, whichever way the
  * cake is turned. The camera framing assumed every shape was as wide as a
  * round one of the same size, so a rectangle — which is 2.56 radii across its
@@ -1025,14 +2138,26 @@ export function footprintRadius(shape: Shape, radius: number): number {
   }
 }
 
-/** Where a topping can sit, given the shape. Round-ish bound is close enough. */
+/**
+ * A circle that fits inside the top of the shape.
+ *
+ * This used to be what toppings were placed on, and "round-ish bound is close
+ * enough" — as the comment here said — was wrong: laying every placement on the
+ * inscribed circle of a square put the ring in a small circle in the middle of a
+ * square top with all four corners bare, and the base border on a circle that
+ * crossed in and out of the wall. Placement measures the real outline now (see
+ * shellOutline and Toppings.place).
+ *
+ * The message plaque still uses it, where a conservative circle is genuinely what
+ * is wanted — it needs one rectangle to fit with room around it, not a path to
+ * follow — and where the heart already carries its own correction.
+ */
 export function surfaceRadius(shape: Shape, radius: number): number {
   switch (shape) {
     case "square": return radius * 0.92;
     case "rectangle": return radius * 0.9;
     case "hexagon": return radius * 0.9;
     case "heart": return radius * 0.78;
-    case "bundt": return radius * 0.95;
     default: return radius;
   }
 }

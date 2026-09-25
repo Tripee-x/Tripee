@@ -11,6 +11,23 @@ interface Props {
 }
 
 /**
+ * The ticket abbreviates because a kitchen ticket abbreviates. A screen reader
+ * has no such convention and reads DELIV as five letters, so the abbreviation
+ * stays on the page and the whole word goes to assistive technology. Only the
+ * labels that are not already whole words get an entry — SHAPE, SIZE and the
+ * rest are words already, and a second copy of the same word in the DOM buys
+ * nothing.
+ */
+const LABEL_SPOKEN: Record<string, string | undefined> = {
+  FILL: "Filling",
+  FROST: "Frosting",
+  COVER: "Coverage",
+  TOP: "Topping",
+  MSG: "Message",
+  DELIV: "Delivery",
+};
+
+/**
  * A docket line used to type itself in one character at a time, on every value
  * change and on every mount — so navigating between steps re-typed all eleven
  * lines at once. What a customer saw was a panel of half-words: SHAPE ROU,
@@ -47,15 +64,24 @@ export function DocketLine({ label, value, delta }: Props) {
   return (
     <div
       className={[
-        "flex items-baseline gap-2 py-[3px] font-mono text-micro leading-[1.7] tabular-nums",
-        "-mx-1.5 rounded-[3px] px-1.5 transition-colors duration-[600ms]",
-        changed && !reduced ? "bg-slab-deep/80" : "bg-transparent",
+        "flex items-baseline gap-2 border py-[3px] font-mono text-micro leading-[1.9] tabular-nums",
+        "-mx-1.5 px-1.5 transition-colors duration-[600ms]",
+        changed && !reduced ? "border-brass-edge bg-brass-tint" : "border-transparent bg-transparent",
       ].join(" ")}
     >
-      <span className="w-[46px] shrink-0 text-steel">{label}</span>
-      {/* min-w-0 + break-words, because "American Buttercream" in a 21%-wide
-          column has to wrap. It used to be shrink-0 whitespace-pre, which gave
-          the whole docket a horizontal scrollbar. */}
+      <span className="w-14 shrink-0 text-steel">
+        {LABEL_SPOKEN[label] ? (
+          <>
+            <span aria-hidden="true">{label}</span>
+            <span className="sr-only">{LABEL_SPOKEN[label]}</span>
+          </>
+        ) : (
+          label
+        )}
+      </span>
+      {/* min-w-0 + break-words: even rem-locked at 20rem, "WHITE CHOCOLATE
+          GANACHE" has to wrap. It used to be shrink-0 whitespace-pre, which
+          gave the whole docket a horizontal scrollbar. */}
       <span className="min-w-0 break-words">{value}</span>
       <span aria-hidden className="min-w-3 grow docket-leader self-stretch" />
       <span className="shrink-0 text-right text-steel">
